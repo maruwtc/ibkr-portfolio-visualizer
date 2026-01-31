@@ -2,170 +2,117 @@
 
 A client-side **Interactive Brokers (IBKR) Activity Statement analyzer** built with **Next.js + React + Shadcn/UI**.
 
-This tool converts IBKR CSV statements into a **realized P&L calendar**, **transaction ledger**, and **currency-aware performance view**, designed for traders who want **cash-based clarity instead of broker UI noise**.
+It converts IBKR CSV statements into a **realized P&L calendar**, **transaction ledger**, and **currency-aware performance view** for traders who want **cash-based clarity instead of broker UI noise**.
 
-> ✅ Realized only  
-> ❌ No unrealized mark-to-market  
-> ❌ No broker lock-in  
-> ✅ Fully offline / browser-only parsing
+- Realized only
+- No unrealized mark-to-market
+- No broker lock-in
+- Fully offline / browser-only parsing
 
 ---
 
-## ✨ Features
+## Features
 
-### 📅 Earnings Calendar (Realized P&L)
+### Earnings Calendar (Realized P&L)
 - Daily profit/loss heatmap
-- Intensity-based coloring (auto-scaled)
-- Monthly statistics:
-  - Total P&L
-  - Win days
-  - Best / worst trading day
-- Supports:
-  - All currencies combined (no FX)
-  - Base currency only
-  - Individual currency selection
+- Auto-scaled intensity coloring
+- Monthly stats: total P&L, win days, best/worst day
+- Views: all currencies combined (no FX), base currency only, or a single currency
 
-> Calendar P&L =  
-> **Realized trades + fees + dividends + interest + withholding tax**
+Calendar P&L = **Realized trades + fees + dividends + interest + withholding tax**
 
----
+### Transaction Ledger
+- Normalized transaction table
+- Types: trades, dividends, interest, withholding tax
+- Filters: search (symbol/description), type, currency, sorting (date/amount)
+- Inspector: trade direction, quantity, price, fees, realized P/L, raw CSV fields
 
-### 📒 Transaction Ledger
-- Full normalized transaction table
-- Supported transaction types:
-  - Trades
-  - Dividends
-  - Interest
-  - Withholding tax
-- Powerful filters:
-  - Search (symbol / description)
-  - Type
-  - Currency
-  - Sorting (date / amount)
-- Transaction inspector:
-  - Trade direction
-  - Quantity
-  - Price
-  - Fees
-  - Realized P/L
-  - Raw IBKR CSV fields (for audit/debug)
+### Multi-Currency Aware
+- Detects base currency and transaction currencies from statements
+- Calendar view supports ALL (no FX), BASE, or a specific currency
+- Avoids false profit from FX mixing
 
----
+### Responsive Layout
+- Desktop: resizable 3-panel layout (controls / calendar or ledger / inspector)
+- Mobile: stacked layout with collapsible inspector and touch-friendly calendar
 
-### 🌍 Multi-Currency Aware
-- Automatically detects:
-  - Base currency from statement
-  - Transaction currencies
-- Allows switching calendar view between:
-  - `ALL` (no FX conversion)
-  - `BASE`
-  - Any individual currency
-- Prevents false profit caused by FX mixing
-
----
-
-### 📱 Responsive Layout
-- **Desktop**
-  - Resizable 3-panel layout
-  - Left: controls
-  - Middle: calendar / ledger
-  - Right: inspector
-- **Mobile**
-  - Fully stacked layout
-  - Collapsible inspector
-  - Touch-friendly calendar
-  - Optimized transaction browsing
-
----
-
-### 📂 Multi-File Support
-- Upload **multiple IBKR CSV files at once**
-- Automatically merges:
-  - Daily P&L
-  - Transactions
+### Multi-File Support
+- Upload multiple IBKR CSV files at once
+- Merges daily P&L and transactions
 - Detects base currency mismatches
 - Adds parser notes per file
 
 ---
 
-## 🧠 What This Tool Is (and Isn’t)
+## What This Tool Is (and Isn’t)
 
-### ✅ What it does
+### It does
 - Cash-based performance tracking
 - Clean trading journal visualization
 - Broker-independent review
 - Audit-friendly transaction inspection
 - Offline-safe (no API keys, no backend)
 
-### ❌ What it does NOT do
+### It does NOT do
 - Unrealized MTM valuation
 - Portfolio NAV tracking
 - Live prices
 - FX conversion
 - Trade execution
 
-If you want **true total return**, you must export:
-```
-NetLiquidation / Daily NAV
-```
-from IBKR separately.
+If you want true total return, export `NetLiquidation / Daily NAV` from IBKR separately.
 
 ---
 
-## 📊 Supported IBKR Statement Format
+## Supported IBKR Statement Format
 
-This app expects **IBKR Activity Statement CSV** with:
+Expected CSV sections:
 
 ```
 Statement / Header / Data
 ```
 
 Supported sections:
-
 - Account Information
 - Trades
 - Dividends
 - Interest
 - Withholding Tax
 
-Other sections are safely ignored.
+Other sections are ignored safely.
 
 ---
 
-## 🏗️ Tech Stack
+## Tech Stack
 
-- **Next.js (App Router)**
-- **React (client-side only)**
-- **TypeScript**
-- **Shadcn/UI**
-- **Tailwind CSS**
-- **PapaParse** (CSV parsing)
-- **GSAP** (light UI animation only)
+- Next.js (App Router)
+- React (client-side only)
+- TypeScript
+- Shadcn/UI
+- Tailwind CSS
+- PapaParse (CSV parsing)
+- GSAP (light UI animation)
 
-No backend.  
-No database.  
-No network calls.
-
-Everything runs **locally in the browser**.
+No backend, database, or network calls. Everything runs locally in the browser.
 
 ---
 
-## 📁 Project Structure (Simplified)
+## Project Structure (Simplified)
 
 ```
 app/
- └── page.tsx         # Main dashboard
+  page.tsx          # Main dashboard
 components/
- └── ui/              # shadcn components
+  ui/               # shadcn components
 lib/
- └── utils            # helper logic
+  utils             # helper logic
 ```
 
-All parsing, aggregation, and calculations are performed in memory.
+All parsing, aggregation, and calculations happen in memory.
 
 ---
 
-## 🔄 Data Model Overview
+## Data Model Overview
 
 ### Daily P&L
 ```ts
@@ -208,23 +155,18 @@ Transaction {
 
 ---
 
-## ⚠️ Important Notes
+## Important Notes
 
-- All numbers come **directly from IBKR CSV**
+- All numbers come directly from the IBKR CSV
 - No rounding beyond display formatting
 - No inferred FX
 - No guessing of unrealized values
 
-This ensures:
-- Audit accuracy
-- Statement reconciliation
-- No hidden broker logic
+This ensures audit accuracy and statement reconciliation without hidden broker logic.
 
 ---
 
-## 🚀 Recommended Next Enhancements
-
-Planned or easy extensions:
+## Recommended Next Enhancements
 
 - Monthly summary table
 - P&L by symbol
@@ -232,32 +174,28 @@ Planned or easy extensions:
 - Equity curve (realized only)
 - Import daily NAV for total return
 - Export reports (CSV / PDF)
-- Tag trades manually
+- Manual trade tags
 
 ---
 
-## 🔐 Privacy & Security
+## Privacy & Security
 
 - No uploads to server
 - No analytics
 - No cookies
 - No API keys
-- No storage unless browser chooses to cache
+- No storage unless the browser caches assets
 
-Your brokerage data **never leaves your device**.
-
----
-
-## 📜 License
-
-MIT License  
-Free to modify, fork, and extend.
+Your brokerage data never leaves your device.
 
 ---
 
-## 🙌 Credits
+## License
 
-Built for traders who prefer:
+MIT License — free to modify, fork, and extend.
 
-> **Understanding their money  
-> instead of trusting a broker dashboard.**
+---
+
+## Credits
+
+Built for traders who prefer understanding their money instead of trusting a broker dashboard.
