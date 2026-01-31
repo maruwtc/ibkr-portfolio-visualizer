@@ -116,16 +116,6 @@ export default function RightPanel({
           <Badge>{mode === 'IBKR_STATEMENT' ? 'IBKR Statement Mode' : 'Unknown'}</Badge>
         </div>
 
-        <Separator />
-
-        <div className="flex flex-col gap-3">
-          <InspectorField label="Calendar Total P&L" value={fmtMoney(totalCalendarPnl)} />
-          <InspectorField label="Transactions" value={transactionsLength.toLocaleString()} />
-          <InspectorField label="Base Currency" value={baseCurrency} />
-          <InspectorField label="Calendar View" value={currencyLabel || '—'} />
-          <InspectorField label="Active Month" value={activeMonth || '—'} />
-        </div>
-
         {monthStats && (
           <>
             <Separator />

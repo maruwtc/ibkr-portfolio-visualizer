@@ -95,7 +95,7 @@ export function buildMonthGrid(year: number, monthIndex0: number, dailyMap: Map<
   const last = new Date(year, monthIndex0 + 1, 0);
 
   const firstDay = first.getDay();
-  const offset = (firstDay + 6) % 7;
+  const offset = firstDay;
   const daysInMonth = last.getDate();
 
   const cells: CalendarCell[] = [];

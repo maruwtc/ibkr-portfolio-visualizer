@@ -3,8 +3,8 @@
 import gsap from 'gsap';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -21,7 +21,37 @@ export default function CalendarPanel() {
     activeMonthCells,
     currencyLabel,
     maxAbsPnl,
+    currentNavTotal,
   } = useWorkspace();
+  const activeIndex = activeMonth ? months.indexOf(activeMonth) : -1;
+
+  const animateCells = () => {
+    gsap.fromTo('.cal-cell', { scale: 0.985, opacity: 0.65 }, { scale: 1, opacity: 1, duration: 0.28, stagger: 0.008, ease: 'power2.out' });
+  };
+
+  const jumpToMonth = (idx: number) => {
+    if (idx < 0 || idx >= months.length) return;
+    setActiveMonth(months[idx]);
+    animateCells();
+  };
+
+  const handlePrev = () => {
+    if (!months.length) return;
+    if (!activeMonth) {
+      jumpToMonth(months.length - 1);
+      return;
+    }
+    if (activeIndex > 0) jumpToMonth(activeIndex - 1);
+  };
+
+  const handleNext = () => {
+    if (!months.length) return;
+    if (!activeMonth) {
+      jumpToMonth(months.length - 1);
+      return;
+    }
+    if (activeIndex >= 0 && activeIndex < months.length - 1) jumpToMonth(activeIndex + 1);
+  };
 
   return (
     <div>
@@ -57,29 +87,45 @@ export default function CalendarPanel() {
           </>
         )}
 
-        <div className="flex gap-2 flex-wrap items-center justify-between">
-          <div className="text-sm text-muted-foreground">Month</div>
-          <div className="flex gap-2 flex-wrap">
-            {months.slice(-18).map((m) => (
-              <Button
-                key={m}
-                size="xs"
-                variant={m === activeMonth ? 'default' : 'outline'}
-                onClick={() => {
-                  setActiveMonth(m);
-                  gsap.fromTo('.cal-cell', { scale: 0.985, opacity: 0.65 }, { scale: 1, opacity: 1, duration: 0.28, stagger: 0.008, ease: 'power2.out' });
-                }}
-              >
-                {m}
-              </Button>
-            ))}
+        <div className="flex items-center justify-center gap-2">
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={handlePrev} disabled={!months.length || activeIndex <= 0}>
+              Prev
+            </Button>
+            <Select
+              value={activeMonth || undefined}
+              onValueChange={(v) => {
+                setActiveMonth(v);
+                animateCells();
+              }}
+            >
+              <SelectTrigger className="h-6 rounded-full border bg-transparent px-2 py-0.5 text-xs text-secondary-foreground shadow-none">
+                <SelectValue placeholder="—" />
+              </SelectTrigger>
+              <SelectContent>
+                {months
+                  .slice()
+                  .reverse()
+                  .map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {m}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleNext}
+              disabled={!months.length || (activeIndex >= 0 && activeIndex >= months.length - 1)}
+            >
+              Next
+            </Button>
           </div>
         </div>
 
-        <Separator />
-
         <div className="grid grid-cols-7 gap-2 text-xs text-muted-foreground">
-          {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
             <div key={d} className="px-1">
               {d}
             </div>
@@ -91,6 +137,7 @@ export default function CalendarPanel() {
             const pnl = c.data?.pnl ?? 0;
             const intensity = quantizeIntensity(pnl, maxAbsPnl);
             const isPos = pnl > 0;
+            const profitPct = currentNavTotal ? (pnl / currentNavTotal) * 100 : null;
 
             const bg = pnl === 0 ? 'bg-muted' : isPos ? 'bg-emerald-500' : 'bg-rose-500';
             const opacity =
@@ -112,25 +159,30 @@ export default function CalendarPanel() {
                 <TooltipTrigger asChild>
                   <button
                     className={[
-                      'cal-cell rounded-xl h-16 sm:h-20 p-2 text-left transition hover:scale-[1.02] hover:shadow flex flex-col',
+                      'cal-cell rounded-xl h-20 sm:h-20 p-2 text-left transition hover:scale-[1.02] hover:shadow flex flex-col',
                       c.inMonth ? '' : 'opacity-40',
                       bg,
                       opacity,
                       textColor,
                     ].join(' ')}
                   >
-                    <div className="flex items-start justify-between gap-1">
+                    <div className="flex flex-col items-start justify-between gap-1">
                       <span className="text-xs font-medium">{c.day}</span>
                       {c.data ? (
-                        <span className="text-[10px] sm:text-[11px] leading-tight px-1.5 py-0.5 rounded-full bg-white/20 text-white border border-white/10 max-w-full truncate">
-                          {pnl > 0 ? '+' : ''}
-                          {fmtMoney(pnl)}
-                        </span>
+                        <>
+                          <span className="text-[10px] sm:text-[10px] leading-tight px-1 py-0.5 rounded-sm bg-white/20 text-white border border-white/10 max-w-full truncate">
+                            {pnl > 0 ? '+' : ''}
+                            {fmtMoney(pnl)}
+                          </span>
+                          <span className="text-[10px] sm:text-[10px] leading-tight px-1 py-0.5 rounded-sm bg-white/20 text-white border border-white/10 max-w-full truncate">
+                            {profitPct !== null ? `${profitPct > 0 ? '+' : ''}${profitPct.toFixed(2)}%` : '—'}
+                          </span>
+                        </>
                       ) : (
                         <span className="text-[11px] opacity-70">—</span>
                       )}
                     </div>
-                    <div className="mt-auto text-[11px] leading-4 opacity-90">{c.data ? 'P&L' : ''}</div>
+                    {/* <div className="mt-auto text-[11px] leading-4 opacity-90">{c.data ? 'P&L' : ''}</div> */}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
@@ -138,6 +190,12 @@ export default function CalendarPanel() {
                   <div className="text-xs text-muted-foreground mt-1">
                     P&L ({currencyLabel}):{' '}
                     <span className="font-medium text-foreground">{c.data ? fmtMoney(c.data.pnl) : '—'}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Profit %:{' '}
+                    <span className="font-medium text-foreground">
+                      {profitPct !== null ? `${profitPct > 0 ? '+' : ''}${profitPct.toFixed(2)}%` : '—'}
+                    </span>
                   </div>
                 </TooltipContent>
               </Tooltip>
