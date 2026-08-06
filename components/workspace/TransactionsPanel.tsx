@@ -45,14 +45,14 @@ export default function TransactionsPanel() {
           <Separator />
         </div>
 
-        <div className="rounded-xl border overflow-hidden flex-1 min-h-0 flex flex-col">
-          <div className="p-3 border-b flex items-center justify-between">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:rounded-xl lg:border">
+          <div className="flex items-center justify-between border-b pb-2 lg:p-3">
             <div className="text-sm font-medium">Results</div>
             <Badge variant="outline">{filteredTxns.length}</Badge>
           </div>
 
           <ScrollArea className="flex-1 min-h-0">
-            <div className="p-2 space-y-2">
+            <div className="lg:space-y-2 lg:p-2">
               {filteredTxns.map((t) => {
                 const isActive = selectedTxn?.id === t.id;
                 const amountCls = t.amount >= 0 ? 'text-emerald-600' : 'text-rose-600';
@@ -64,8 +64,9 @@ export default function TransactionsPanel() {
                     key={t.id}
                     onClick={() => setSelectedTxn(t)}
                     className={[
-                      'w-full text-left rounded-xl border p-3 transition hover:border-foreground/20',
-                      isActive ? 'border-foreground/60 bg-muted/40' : 'bg-background',
+                      'w-full border-b py-3 text-left transition last:border-b-0',
+                      'lg:rounded-xl lg:border lg:p-3 lg:hover:border-foreground/20',
+                      isActive ? 'bg-muted/40 lg:border-foreground/60' : 'lg:bg-background',
                     ].join(' ')}
                   >
                     <div className="flex items-start justify-between gap-3">
