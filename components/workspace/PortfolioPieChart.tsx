@@ -7,9 +7,14 @@ import { fmtMoney } from './utils';
 export default function PortfolioPieChart({
   items,
   size = 220,
+  centerTitle = 'Allocation',
+  centerValue,
 }: {
   items: { label: string; value: number; color: string }[];
   size?: number;
+  centerTitle?: string;
+  /** Defaults to the slice count; pass a formatted total for value-based charts. */
+  centerValue?: string;
 }) {
   const total = items.reduce((a, b) => a + b.value, 0);
   const [hover, setHover] = useState<{ x: number; y: number; label: string } | null>(null);
@@ -84,10 +89,10 @@ export default function PortfolioPieChart({
         ))}
         <circle cx={center} cy={center} r={radius * 0.55} fill="var(--background)" />
         <text x={center} y={center - 2} textAnchor="middle" fontSize="14" fill="var(--muted-foreground)">
-          Allocation
+          {centerTitle}
         </text>
         <text x={center} y={center + 16} textAnchor="middle" fontSize="16" fill="var(--foreground)" fontWeight="600">
-          {items.length} Symbols
+          {centerValue ?? `${items.length} Symbols`}
         </text>
       </svg>
       {hover && (

@@ -21,6 +21,8 @@ export default function PortfolioPanel({
   currentUnrealized,
   holdingsAllocation,
   cashAllocationNow,
+  navComposition,
+  navBreakdown,
   series,
   totalCalendarPnl,
   portfolioPeriod,
@@ -41,6 +43,8 @@ export default function PortfolioPanel({
   currentUnrealized: number;
   holdingsAllocation: { label: string; value: number; color: string }[];
   cashAllocationNow: { label: string; value: number; color: string }[];
+  navComposition: { label: string; value: number; color: string }[];
+  navBreakdown: { label: string; value: number; color: string }[];
   series: DailyPoint[];
   totalCalendarPnl: number;
   portfolioPeriod: string;
@@ -53,6 +57,10 @@ export default function PortfolioPanel({
   cashBreakdown: { label: string; value: number; color: string }[];
   cashByCurrency: { label: string; value: number; color: string }[];
 }) {
+  // Shares are measured against reported NAV when the statement gives one, otherwise
+  // against the magnitudes actually charted.
+  const navShareBase = Math.abs(currentNavTotal) || navBreakdown.reduce((acc, r) => acc + Math.abs(r.value), 0);
+
   return (
     <div>
       <div className="text-lg font-semibold">Portfolio Overview</div>
@@ -73,6 +81,44 @@ export default function PortfolioPanel({
                 <StatCard title="Total Cash" value={currentNavCash ? fmtMoney(currentNavCash) : '—'} />
                 <StatCard title="Stock Value" value={currentNavStock ? fmtMoney(currentNavStock) : '—'} />
                 <StatCard title="Unrealized P/L" value={currentUnrealized ? fmtMoney(currentUnrealized) : '—'} />
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4">
+                <div className="rounded-2xl border p-4">
+                  <div className="text-sm text-muted-foreground">NAV Composition</div>
+                  <div className="text-xs text-muted-foreground">Stock, cash and other asset classes.</div>
+                  <div className="mt-3">
+                    <PortfolioPieChart
+                      items={navComposition}
+                      centerTitle="Net Liquidation"
+                      centerValue={currentNavTotal ? fmtMoney(currentNavTotal) : undefined}
+                    />
+                  </div>
+                </div>
+                <div className="rounded-2xl border p-4">
+                  <div className="text-sm text-muted-foreground">Asset Classes</div>
+                  <div className="text-xs text-muted-foreground">Share of net liquidation value.</div>
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {navBreakdown.map((s) => {
+                      const share = navShareBase ? (Math.abs(s.value) / navShareBase) * 100 : 0;
+                      return (
+                        <div key={s.label} className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />
+                            <span className="text-sm font-medium">{s.label}</span>
+                          </div>
+                          <div className="text-sm text-muted-foreground">
+                            {fmtMoney(s.value)}
+                            {navShareBase > 0 && <span className="ml-2 text-xs">{share.toFixed(1)}%</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {navBreakdown.length === 0 && (
+                      <div className="text-sm text-muted-foreground">No net asset value breakdown detected.</div>
+                    )}
+                  </div>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4">

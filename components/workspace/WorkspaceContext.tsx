@@ -89,6 +89,8 @@ type WorkspaceContextValue = {
   currentUnrealized: number;
   holdingsAllocation: { label: string; value: number; color: string }[];
   cashAllocationNow: { label: string; value: number; color: string }[];
+  navComposition: { label: string; value: number; color: string }[];
+  navBreakdown: { label: string; value: number; color: string }[];
   chatContext: string;
 
   parseVersion: number;
@@ -1114,6 +1116,54 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     return sorted.map((c, i) => ({ label: c.currency, value: Math.abs(c.valueBase), color: palette[i % palette.length] }));
   }, [cashBalances]);
 
+  const NAV_STOCK_COLOR = 'var(--chart-1)';
+  const NAV_CASH_COLOR = 'var(--chart-2)';
+  const NAV_OTHER_COLOR = 'var(--chart-3)';
+
+  /** Every NAV entry that is neither the total nor the stock/cash buckets. */
+  const navOtherClasses = useMemo(
+    () => Object.entries(navByClass).filter(([key]) => key !== 'total' && key !== 'stock' && key !== 'cash'),
+    [navByClass]
+  );
+
+  const navComposition = useMemo(() => {
+    const explicitOthers = navOtherClasses.reduce((acc, [, v]) => acc + v, 0);
+    // Prefer the residual against reported NAV — it also covers asset classes the
+    // statement reported only inside the total.
+    const others = currentNavTotal ? currentNavTotal - currentNavStock - currentNavCash : explicitOthers;
+
+    return [
+      { label: 'Stock', value: currentNavStock, color: NAV_STOCK_COLOR },
+      { label: 'Cash', value: currentNavCash, color: NAV_CASH_COLOR },
+      { label: 'Others', value: others, color: NAV_OTHER_COLOR },
+    ]
+      // The pie can only draw magnitudes; the breakdown list carries the real signs
+      // (cash goes negative on a margin debit).
+      .map((slice) => ({ ...slice, value: Math.abs(slice.value) }))
+      .filter((slice) => slice.value > 0.005);
+  }, [currentNavCash, currentNavStock, currentNavTotal, navOtherClasses]);
+
+  const navBreakdown = useMemo(() => {
+    // Everything outside stock/cash carries the Others colour, so this list reads as
+    // the legend of the three-slice composition chart.
+    const rows = [
+      { label: 'Stock', value: currentNavStock, color: NAV_STOCK_COLOR },
+      { label: 'Cash', value: currentNavCash, color: NAV_CASH_COLOR },
+      ...navOtherClasses.map(([key, value]) => ({
+        label: key.replace(/\b\w/g, (c) => c.toUpperCase()),
+        value,
+        color: NAV_OTHER_COLOR,
+      })),
+    ];
+
+    const residual = currentNavTotal
+      ? currentNavTotal - rows.reduce((acc, r) => acc + r.value, 0)
+      : 0;
+    if (Math.abs(residual) > 0.005) rows.push({ label: 'Other', value: residual, color: NAV_OTHER_COLOR });
+
+    return rows.filter((r) => Math.abs(r.value) > 0.005);
+  }, [currentNavCash, currentNavStock, currentNavTotal, navOtherClasses]);
+
   const chatContext = useMemo(() => {
     const topPositions = [...positions]
       .sort((a, b) => Math.abs(b.marketValue) - Math.abs(a.marketValue))
@@ -1260,6 +1310,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       currentUnrealized,
       holdingsAllocation,
       cashAllocationNow,
+      navComposition,
+      navBreakdown,
       chatContext,
       parseVersion,
     }),
@@ -1297,7 +1349,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       mode,
       monthStats,
       months,
+      navBreakdown,
       navByClass,
+      navComposition,
       notes,
       parseError,
       parseFiles,
