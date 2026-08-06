@@ -34,7 +34,7 @@ export default function TransactionsPanel() {
         <div className="flex items-center gap-2 flex-wrap">
           <Badge variant="outline">Rows: {filteredTxns.length}</Badge>
           <Badge variant="outline">Total: {fmtMoney(txnSummary.total)}</Badge>
-          {(['TRADE', 'DIVIDEND', 'INTEREST', 'WHT'] as const).map((t) => (
+          {(['TRADE', 'DIVIDEND', 'INTEREST', 'WHT', 'FEE'] as const).map((t) => (
             <Badge key={t} variant="secondary">
               {fmtTxnType(t)}: {fmtMoney(txnSummary.byType[t] || 0)}
             </Badge>
@@ -61,6 +61,7 @@ export default function TransactionsPanel() {
                 <SelectItem value="DIVIDEND">Dividend</SelectItem>
                 <SelectItem value="INTEREST">Interest</SelectItem>
                 <SelectItem value="WHT">Withholding Tax</SelectItem>
+                <SelectItem value="FEE">Fee</SelectItem>
               </SelectContent>
             </Select>
           </div>

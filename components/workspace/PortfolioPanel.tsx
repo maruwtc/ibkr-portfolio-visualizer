@@ -56,7 +56,7 @@ export default function PortfolioPanel({
   return (
     <div>
       <div className="text-lg font-semibold">Portfolio Overview</div>
-      <div className="text-sm text-muted-foreground">Current state + realized performance from your IBKR activity.</div>
+      <div className="text-sm text-muted-foreground">Current state + realized performance from your uploaded statements.</div>
       <div className="mt-4 space-y-6">
         <div className="space-y-3">
           <div className="text-base font-semibold">Current State</div>
@@ -139,7 +139,7 @@ export default function PortfolioPanel({
 
         {!series.length ? (
           <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">
-            Upload an IBKR Activity Statement CSV to render the performance curve.
+            Upload an IBKR Activity Statement (CSV) or Firstrade statement (PDF) to render the performance curve.
           </div>
         ) : (
           <div className="space-y-4">

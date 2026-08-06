@@ -20,7 +20,7 @@ import RightPanel from '@/components/workspace/RightPanel';
 import ThemeToggle from '@/components/theme/ThemeToggle';
 import { WorkspaceProvider, useWorkspace } from '@/components/workspace/WorkspaceContext';
 import type { ActiveTab } from '@/components/workspace/types';
-import { fmtMoney } from '@/components/workspace/utils';
+import { fmtMode, fmtMoney } from '@/components/workspace/utils';
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(false);
@@ -180,7 +180,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
         <div className="space-y-2">
           <div className="text-sm font-medium">Transactions View</div>
           <div className="flex gap-2 flex-wrap items-center">
-            {(['ALL', 'TRADE', 'DIVIDEND', 'INTEREST', 'WHT'] as const).map((t) => (
+            {(['ALL', 'TRADE', 'DIVIDEND', 'INTEREST', 'WHT', 'FEE'] as const).map((t) => (
               <Button key={t} size="sm" variant={txnType === t ? 'default' : 'outline'} onClick={() => setTxnType(t as any)}>
                 {t === 'ALL' ? 'All' : t}
               </Button>
@@ -242,12 +242,12 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
           <div className="p-4 pb-24 space-y-4">
             <div className="flex items-start justify-between gap-2">
               <div>
-                <div className="text-lg font-semibold leading-tight">IBKR Portfolio Management</div>
+                <div className="text-lg font-semibold leading-tight">Portfolio Visualizer</div>
                 <div className="text-xs text-muted-foreground mt-1">Realized/cash calendar + ledger</div>
               </div>
               <div className="flex items-center gap-2">
                 <Button size="sm" variant="secondary" onClick={pickFiles}>
-                  Upload CSV
+                  Upload CSV / PDF
                 </Button>
                 <Button size="sm" variant="outline" onClick={clearAll} disabled={!series.length && rawNames.length === 0}>
                   Clear
@@ -262,13 +262,13 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
               {isParsing && (
                 <Alert>
                   <AlertTitle>Parsing…</AlertTitle>
-                  <AlertDescription>Reading CSV and building performance + transactions.</AlertDescription>
+                  <AlertDescription>Reading files and building performance + transactions.</AlertDescription>
                 </Alert>
               )}
 
               {parseError && (
                 <Alert variant="destructive">
-                  <AlertTitle>CSV parse failed</AlertTitle>
+                  <AlertTitle>Upload parse failed</AlertTitle>
                   <AlertDescription>{parseError}</AlertDescription>
                 </Alert>
               )}
@@ -277,8 +277,8 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                 <div ref={dropRef}>
                   <Card className="border-dashed">
                     <CardHeader>
-                      <CardTitle className="text-base">Drop CSV here</CardTitle>
-                      <CardDescription>IBKR Activity Statement (Statement/Header/Data).</CardDescription>
+                      <CardTitle className="text-base">Drop CSV or PDF here</CardTitle>
+                      <CardDescription>IBKR Activity Statement (CSV) or Firstrade statement (PDF).</CardDescription>
                     </CardHeader>
                   </Card>
                 </div>
@@ -288,8 +288,8 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                 <>
                   <div className="flex items-center gap-2 flex-wrap">
                     {rawNames.length > 0 && <Badge variant="secondary">Files: {rawNames.length}</Badge>}
-                    <Badge>{mode === 'IBKR_STATEMENT' ? 'IBKR Statement Mode' : 'Unknown Mode'}</Badge>
-                    {mode === 'IBKR_STATEMENT' && <Badge variant="outline">View: {currencyLabel}</Badge>}
+                    <Badge>{fmtMode(mode)}</Badge>
+                    {mode !== 'UNKNOWN' && <Badge variant="outline">View: {currencyLabel}</Badge>}
                     {series.length > 0 && <Badge variant="outline">Days: {series.length}</Badge>}
                     {transactions.length > 0 && <Badge variant="outline">Txns: {transactions.length}</Badge>}
                   </div>
@@ -302,7 +302,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                     <StatCard title="Base Currency" value={baseCurrency} />
                   </div>
 
-                  {mode === 'IBKR_STATEMENT' && viewControls && (
+                  {mode !== 'UNKNOWN' && viewControls && (
                     <>
                       <Separator />
                       {viewControls}
@@ -339,7 +339,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
               <div className="flex items-center justify-center mx-auto max-w-6xl w-full px-4 py-2 gap-2">
                 <NavTabs
                   activeTab={activeTab}
-                  labels={{ calendar: 'Calendar', transactions: 'Transactions', portfolio: 'Portfolio', chat: 'Chatbot' }}
+                  labels={{ portfolio: 'Portfolio', transactions: 'Transactions', calendar: 'Calendar', chat: 'Chatbot' }}
                   isMobile
                 />
               </div>
@@ -361,14 +361,14 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                     <div className="flex items-center justify-between mb-4 gap-2">
                       <NavTabs
                         activeTab={activeTab}
-                        labels={{ calendar: 'Calendar', transactions: 'Transactions', portfolio: 'Portfolio', chat: 'Chatbot' }}
+                        labels={{ portfolio: 'Portfolio', transactions: 'Transactions', calendar: 'Calendar', chat: 'Chatbot' }}
                       />
                       <ThemeToggle />
                     </div>
 
                     <div className="flex items-center justify-between">
                       <div>
-                        <div className="text-xl font-semibold">IBKR Portfolio Management</div>
+                        <div className="text-xl font-semibold">Portfolio Visualizer</div>
                         <div className="text-sm text-muted-foreground">Realized/cash calendar + ledger</div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -378,7 +378,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
 
                     <div className="mt-3 flex gap-2">
                       <Button size="sm" variant="secondary" onClick={pickFiles}>
-                        Upload CSV
+                        Upload CSV / PDF
                       </Button>
                       <Button size="sm" variant="outline" onClick={clearAll} disabled={!series.length && rawNames.length === 0}>
                         Clear
@@ -391,13 +391,13 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                       {isParsing && (
                         <Alert>
                           <AlertTitle>Parsing…</AlertTitle>
-                          <AlertDescription>Reading CSV and building performance + transactions.</AlertDescription>
+                          <AlertDescription>Reading files and building performance + transactions.</AlertDescription>
                         </Alert>
                       )}
 
                       {parseError && (
                         <Alert variant="destructive">
-                          <AlertTitle>CSV parse failed</AlertTitle>
+                          <AlertTitle>Upload parse failed</AlertTitle>
                           <AlertDescription>{parseError}</AlertDescription>
                         </Alert>
                       )}
@@ -406,11 +406,11 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                         <div ref={dropRef}>
                           <Card className="border-dashed" onClick={pickFiles} style={{ cursor: 'pointer' }}>
                             <CardHeader>
-                              <CardTitle className="text-base">Click to Upload / Drop CSV here</CardTitle>
+                              <CardTitle className="text-base">Click to Upload / Drop CSV or PDF here</CardTitle>
                             </CardHeader>
                             <CardContent>
                               <Alert>
-                                <AlertDescription>IBKR Activity Statement (Statement/Header/Data).</AlertDescription>
+                                <AlertDescription>IBKR Activity Statement (CSV) or Firstrade statement (PDF).</AlertDescription>
                               </Alert>
                             </CardContent>
                           </Card>
@@ -421,8 +421,8 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                         <>
                           <div className="flex items-center gap-2 flex-wrap">
                             {rawNames.length > 0 && <Badge variant="secondary">Files: {rawNames.length}</Badge>}
-                            <Badge>{mode === 'IBKR_STATEMENT' ? 'IBKR Statement Mode' : 'Unknown Mode'}</Badge>
-                            {mode === 'IBKR_STATEMENT' && <Badge variant="outline">View: {currencyLabel}</Badge>}
+                            <Badge>{fmtMode(mode)}</Badge>
+                            {mode !== 'UNKNOWN' && <Badge variant="outline">View: {currencyLabel}</Badge>}
                             {series.length > 0 && <Badge variant="outline">Days: {series.length}</Badge>}
                             {transactions.length > 0 && <Badge variant="outline">Txns: {transactions.length}</Badge>}
                           </div>
@@ -437,7 +437,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
 
                           <Separator />
 
-                          {mode === 'IBKR_STATEMENT' && viewControls && (
+                          {mode !== 'UNKNOWN' && viewControls && (
                             <div className="space-y-3">
                               <div className="text-sm">View Controls</div>
                               <div className="text-sm text-muted-foreground">Controls change based on the active tab.</div>

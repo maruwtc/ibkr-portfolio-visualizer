@@ -62,7 +62,7 @@ export default function CalendarPanel() {
           <Alert>
             <AlertTitle>No month selected</AlertTitle>
             <AlertDescription>
-              Upload CSV and select a month. If you already have data, pick from the month buttons below.
+              Upload a statement and select a month. If you already have data, pick from the month buttons below.
             </AlertDescription>
           </Alert>
         )}
