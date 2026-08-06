@@ -178,9 +178,16 @@ function makeYearResolver(period: Period) {
 
 type ActivityKind = TxnType;
 
+function isReinvestment(line: string): boolean {
+  return /\bREINVEST/i.test(line) || /\bDRIP\b/i.test(line);
+}
+
 function classify(line: string): ActivityKind | null {
   const s = line.toUpperCase();
 
+  // Must precede the dividend branch: a DRIP row is the share purchase funded by a
+  // dividend that is already booked on its own line, not a second dividend.
+  if (isReinvestment(s)) return 'TRADE';
   if (/\b(BOUGHT|SOLD|BUY|SELL|PURCHASED?|REDEMPTION|EXERCISE|ASSIGNED?)\b/.test(s)) return 'TRADE';
   if (/\b(TAX\s+WITHHELD|WITHHOLDING|WITHHELD|W\/H\s+TAX)\b/.test(s)) return 'WHT';
   if (/\b(DIVIDEND|DIV|CAPITAL\s+GAIN|DISTRIBUTION)\b/.test(s)) return 'DIVIDEND';
@@ -212,6 +219,7 @@ type ActivityRow = {
   quantity?: number;
   price?: number;
   proceeds?: number;
+  drip?: boolean;
 };
 
 /** Recognizes `MM/DD[/YY] [settle date] <description> … <amount>` activity rows. */
@@ -243,7 +251,9 @@ function parseActivityLine(line: string, resolveYear: (m: number, d: number) => 
   const symbol = extractSymbol(rest, firstNumericIndex >= 0 ? firstNumericIndex : rest.length);
 
   if (kind === 'TRADE') {
-    const isSell = /\b(SOLD|SELL|REDEMPTION)\b/i.test(rest.join(' '));
+    const text = rest.join(' ');
+    const drip = isReinvestment(text);
+    const isSell = !drip && /\b(SOLD|SELL|REDEMPTION)\b/i.test(text);
     const side: 'BUY' | 'SELL' = isSell ? 'SELL' : 'BUY';
 
     let quantity: number | undefined;
@@ -262,6 +272,13 @@ function parseActivityLine(line: string, resolveYear: (m: number, d: number) => 
     if (quantity !== undefined) quantity = Math.abs(quantity);
     const amount = Math.abs(rawAmount) * (side === 'SELL' ? 1 : -1);
 
+    // Reinvestment rows often state only one side of the purchase ("REINVEST @ 180.00").
+    // The missing side follows from the cash reinvested.
+    if (drip) {
+      if (quantity === undefined && price) quantity = Math.abs(amount) / price;
+      else if (price === undefined && quantity) price = Math.abs(amount) / quantity;
+    }
+
     return {
       date,
       kind,
@@ -272,6 +289,7 @@ function parseActivityLine(line: string, resolveYear: (m: number, d: number) => 
       quantity,
       price,
       proceeds: amount,
+      drip,
     };
   }
 
@@ -405,7 +423,9 @@ export function parseFirstradeStatement(lines: string[]): ParsedStatement {
 
       const title =
         activity.kind === 'TRADE'
-          ? `${activity.symbol ?? 'Trade'} ${activity.side ?? ''}`.trim()
+          ? activity.drip
+            ? `${activity.symbol ?? 'Dividend'} REINVEST`
+            : `${activity.symbol ?? 'Trade'} ${activity.side ?? ''}`.trim()
           : activity.symbol && activity.kind === 'DIVIDEND'
             ? `${activity.symbol} Dividend`
             : activity.kind === 'INTEREST'
@@ -428,6 +448,7 @@ export function parseFirstradeStatement(lines: string[]): ParsedStatement {
         tradePrice: activity.price,
         proceeds: activity.kind === 'TRADE' ? activity.proceeds : undefined,
         fee: activity.kind === 'FEE' ? activity.amount : undefined,
+        drip: activity.drip || undefined,
         raw: { line },
       });
       continue;

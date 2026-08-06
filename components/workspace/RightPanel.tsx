@@ -6,7 +6,7 @@ import { Separator } from '@/components/ui/separator';
 
 import InspectorField from './InspectorField';
 import type { ActiveTab, MonthStats, Transaction } from './types';
-import { fmtMode, fmtMoney, fmtTxnType, typeBadgeVariant } from './utils';
+import { fmtMode, fmtMoney, fmtShareDetail, fmtTxnType, reinvestedValue, typeBadgeVariant } from './utils';
 
 export default function RightPanel({
   activeTab,
@@ -64,6 +64,7 @@ export default function RightPanel({
                 <Badge variant="outline">{selectedTxn.currency}</Badge>
                 <Badge variant="outline">{selectedTxn.date}</Badge>
                 {selectedTxn.symbol && <Badge variant="secondary">{selectedTxn.symbol}</Badge>}
+                {selectedTxn.drip && <Badge variant="outline">DRIP</Badge>}
                 {selectedTxn.sourceFile && <Badge variant="outline">{selectedTxn.sourceFile}</Badge>}
               </div>
 
@@ -84,6 +85,17 @@ export default function RightPanel({
                 />
                 <InspectorField label="Fees" value={selectedTxn.fee !== undefined ? fmtMoney(selectedTxn.fee) : '—'} />
                 <InspectorField label="Realized P/L" value={selectedTxn.realizedPnl !== undefined ? fmtMoney(selectedTxn.realizedPnl) : '—'} />
+                {selectedTxn.drip && (
+                  <InspectorField
+                    label="Dividend Reinvested"
+                    value={[
+                      reinvestedValue(selectedTxn) !== null ? fmtMoney(reinvestedValue(selectedTxn) as number) : null,
+                      fmtShareDetail(selectedTxn),
+                    ]
+                      .filter(Boolean)
+                      .join(' · ') || '—'}
+                  />
+                )}
               </div>
 
               <Separator />

@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 
 import { useWorkspace } from './WorkspaceContext';
-import { fmtMoney, fmtTxnType, typeBadgeVariant } from './utils';
+import { fmtMoney, fmtShareDetail, fmtTxnType, reinvestedValue, typeBadgeVariant } from './utils';
 
 export default function TransactionsPanel() {
   const {
@@ -26,6 +26,9 @@ export default function TransactionsPanel() {
     setSelectedTxn,
   } = useWorkspace();
 
+  // Cash the filtered rows put back into stock through dividend reinvestment.
+  const reinvestedTotal = filteredTxns.reduce((acc, t) => acc + (reinvestedValue(t) ?? 0), 0);
+
   return (
     <div className="h-full flex flex-col min-h-0">
       <div className="text-lg font-semibold">Transactions</div>
@@ -39,6 +42,7 @@ export default function TransactionsPanel() {
               {fmtTxnType(t)}: {fmtMoney(txnSummary.byType[t] || 0)}
             </Badge>
           ))}
+          {reinvestedTotal > 0 && <Badge variant="outline">Reinvested: {fmtMoney(reinvestedTotal)}</Badge>}
         </div>
 
         <Separator />
@@ -112,6 +116,8 @@ export default function TransactionsPanel() {
               {filteredTxns.map((t) => {
                 const isActive = selectedTxn?.id === t.id;
                 const amountCls = t.amount >= 0 ? 'text-emerald-600' : 'text-rose-600';
+                const reinvested = reinvestedValue(t);
+                const shareDetail = t.drip ? fmtShareDetail(t) : null;
 
                 return (
                   <button
@@ -129,6 +135,7 @@ export default function TransactionsPanel() {
                           <Badge variant="outline">{t.currency}</Badge>
                           <Badge variant="outline">{t.date}</Badge>
                           {t.symbol && <Badge variant="secondary">{t.symbol}</Badge>}
+                          {t.drip && <Badge variant="outline">DRIP</Badge>}
                         </div>
                         <div className="mt-2 text-sm font-medium">{t.title}</div>
                         {t.description && <div className="text-xs text-muted-foreground mt-1">{t.description}</div>}
@@ -136,6 +143,12 @@ export default function TransactionsPanel() {
                           {t.quantity !== undefined && (
                             <span>
                               Qty: <span className="text-foreground">{t.quantity.toLocaleString()}</span>
+                            </span>
+                          )}
+                          {reinvested !== null && (
+                            <span>
+                              Reinvested: <span className="text-foreground">{fmtMoney(reinvested)}</span>
+                              {shareDetail ? ` · ${shareDetail}` : ''}
                             </span>
                           )}
                         </div>

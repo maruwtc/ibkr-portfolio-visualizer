@@ -38,6 +38,9 @@ export type Transaction = {
   realizedPnl?: number;
   fee?: number;
 
+  /** Share purchase funded by a dividend (IBKR trade code R / Firstrade reinvestment row). */
+  drip?: boolean;
+
   raw?: Record<string, string>;
 
   sourceFile?: string;

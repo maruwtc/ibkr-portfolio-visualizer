@@ -149,6 +149,9 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
   const cashBalances: CashBalance[] = [];
   const mkId = (prefix: string, i: number) => `${prefix}-${i}-${Math.random().toString(16).slice(2)}`;
   const normalize = (s: string) => (s || '').trim();
+  // IBKR's Dividends / Withholding Tax sections carry no Symbol column: the ticker leads
+  // the description, e.g. "VTI(US9229087690) Cash Dividend USD 0.505 per Share".
+  const symbolFromDescription = (desc: string) => /^([A-Za-z0-9.\-]{1,8})\s*\(/.exec(normalize(desc))?.[1] ?? '';
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -196,10 +199,11 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
       const idxSymbol = getI(/^Symbol$/i);
       const idxDateTime = getI(/^Date\/Time$/i);
       const idxQty = getI(/^Quantity$/i);
-      const idxTPrice = getI(/^T\\.\\s*Price$/i);
+      const idxTPrice = getI(/^T\.\s*Price$/i);
       const idxProceeds = getI(/^Proceeds$/i);
       const idxFee = getI(/^Comm\/Fee$/i);
       const idxRealized = getI(/^Realized P\/L$/i);
+      const idxCode = getI(/^(Code|Notes\/Codes)$/i);
 
       const currency = normalize(getByIdx(idxCurrency));
       const iso = toISODate(getByIdx(idxDateTime));
@@ -220,7 +224,11 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
         const side: 'BUY' | 'SELL' | undefined = qty > 0 ? 'BUY' : qty < 0 ? 'SELL' : undefined;
         const absQty = Math.abs(qty);
 
-        const title = symbol ? `${symbol} ${side ?? ''}`.trim() : 'Trade';
+        // IBKR flags dividend-reinvestment buys with trade code R (e.g. "O;R").
+        const codes = normalize(getByIdx(idxCode)).split(/[;,\s]+/).filter(Boolean);
+        const isDrip = codes.includes('R');
+
+        const title = isDrip && symbol ? `${symbol} REINVEST` : symbol ? `${symbol} ${side ?? ''}`.trim() : 'Trade';
         const amount = realized + fee;
 
         txns.push({
@@ -229,8 +237,9 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
           type: 'TRADE',
           currency,
           title,
-          description: 'Realized P/L + Fees',
+          description: isDrip ? 'Dividend reinvestment (IBKR code R)' : 'Realized P/L + Fees',
           amount,
+          drip: isDrip || undefined,
           symbol: symbol || undefined,
           side,
           quantity: absQty || undefined,
@@ -250,9 +259,12 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
       const idxSymbol = getI(/^Symbol$/i);
       const idxAmount = getI(/^Amount$/i);
 
+      const idxDescription = getI(/^Description$/i);
+
       const date = toISODate(getByIdx(idxDate));
       const currency = normalize(getByIdx(idxCurrency));
-      const symbol = normalize(getByIdx(idxSymbol));
+      const description = normalize(getByIdx(idxDescription));
+      const symbol = normalize(getByIdx(idxSymbol)) || symbolFromDescription(description);
       const amount = safeNum(getByIdx(idxAmount));
 
       if (date && currency) {
@@ -267,7 +279,7 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
           type: 'DIVIDEND',
           currency,
           title: symbol ? `${symbol} Dividend` : 'Dividend',
-          description: '',
+          description,
           amount,
           symbol,
           raw: Object.fromEntries(header.map((h, j) => [h, row[state.offset + j] ?? ''])),
@@ -311,9 +323,12 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
       const idxSymbol = getI(/^Symbol$/i);
       const idxAmount = getI(/^Amount$/i);
 
+      const idxDescription = getI(/^Description$/i);
+
       const date = toISODate(getByIdx(idxDate));
       const currency = normalize(getByIdx(idxCurrency));
-      const symbol = normalize(getByIdx(idxSymbol));
+      const description = normalize(getByIdx(idxDescription));
+      const symbol = normalize(getByIdx(idxSymbol)) || symbolFromDescription(description);
       const amount = safeNum(getByIdx(idxAmount));
 
       if (date && currency) {
@@ -328,7 +343,7 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
           type: 'WHT',
           currency,
           title: symbol ? `${symbol} Withholding` : 'Withholding Tax',
-          description: '',
+          description,
           amount,
           symbol,
           raw: Object.fromEntries(header.map((h, j) => [h, row[state.offset + j] ?? ''])),
