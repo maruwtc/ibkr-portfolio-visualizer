@@ -339,7 +339,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
               <div className="flex items-center justify-center mx-auto max-w-6xl w-full px-4 py-2 gap-2">
                 <NavTabs
                   activeTab={activeTab}
-                  labels={{ calendar: 'Calendar', transactions: 'Transactions', portfolio: 'Portfolio', chat: 'Chatbot' }}
+                  labels={{ portfolio: 'Portfolio', transactions: 'Transactions', calendar: 'Calendar', chat: 'Chatbot' }}
                   isMobile
                 />
               </div>
@@ -361,7 +361,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                     <div className="flex items-center justify-between mb-4 gap-2">
                       <NavTabs
                         activeTab={activeTab}
-                        labels={{ calendar: 'Calendar', transactions: 'Transactions', portfolio: 'Portfolio', chat: 'Chatbot' }}
+                        labels={{ portfolio: 'Portfolio', transactions: 'Transactions', calendar: 'Calendar', chat: 'Chatbot' }}
                       />
                       <ThemeToggle />
                     </div>
