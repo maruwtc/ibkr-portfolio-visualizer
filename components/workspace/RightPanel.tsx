@@ -6,7 +6,7 @@ import { Separator } from '@/components/ui/separator';
 
 import InspectorField from './InspectorField';
 import type { ActiveTab, MonthStats, Transaction } from './types';
-import { fmtMode, fmtMoney, fmtTxnType, typeBadgeVariant } from './utils';
+import { fmtMode, fmtMoney, fmtShareDetail, fmtTxnType, reinvestedValue, typeBadgeVariant } from './utils';
 
 export default function RightPanel({
   activeTab,
@@ -49,12 +49,13 @@ export default function RightPanel({
 
   if (activeTab === 'transactions') {
     return (
-      <Card className="h-full">
-        <CardHeader>
+      // Inside the mobile sheet the card chrome and heading are redundant.
+      <Card className="h-full border-0 py-0 shadow-none lg:border lg:py-6 lg:shadow-sm">
+        <CardHeader className="hidden lg:grid">
           <CardTitle className="text-base">Transaction Inspector</CardTitle>
           <CardDescription>Click a row to drill down.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-3 px-0 lg:px-6">
           {!selectedTxn ? (
             <div className="text-sm text-muted-foreground">No transaction selected.</div>
           ) : (
@@ -64,6 +65,7 @@ export default function RightPanel({
                 <Badge variant="outline">{selectedTxn.currency}</Badge>
                 <Badge variant="outline">{selectedTxn.date}</Badge>
                 {selectedTxn.symbol && <Badge variant="secondary">{selectedTxn.symbol}</Badge>}
+                {selectedTxn.drip && <Badge variant="outline">DRIP</Badge>}
                 {selectedTxn.sourceFile && <Badge variant="outline">{selectedTxn.sourceFile}</Badge>}
               </div>
 
@@ -84,6 +86,17 @@ export default function RightPanel({
                 />
                 <InspectorField label="Fees" value={selectedTxn.fee !== undefined ? fmtMoney(selectedTxn.fee) : '—'} />
                 <InspectorField label="Realized P/L" value={selectedTxn.realizedPnl !== undefined ? fmtMoney(selectedTxn.realizedPnl) : '—'} />
+                {selectedTxn.drip && (
+                  <InspectorField
+                    label="Dividend Reinvested"
+                    value={[
+                      reinvestedValue(selectedTxn) !== null ? fmtMoney(reinvestedValue(selectedTxn) as number) : null,
+                      fmtShareDetail(selectedTxn),
+                    ]
+                      .filter(Boolean)
+                      .join(' · ') || '—'}
+                  />
+                )}
               </div>
 
               <Separator />

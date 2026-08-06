@@ -7,9 +7,14 @@ import { fmtMoney } from './utils';
 export default function PortfolioPieChart({
   items,
   size = 220,
+  centerTitle = 'Allocation',
+  centerValue,
 }: {
   items: { label: string; value: number; color: string }[];
   size?: number;
+  centerTitle?: string;
+  /** Defaults to the slice count; pass a formatted total for value-based charts. */
+  centerValue?: string;
 }) {
   const total = items.reduce((a, b) => a + b.value, 0);
   const [hover, setHover] = useState<{ x: number; y: number; label: string } | null>(null);
@@ -36,7 +41,10 @@ export default function PortfolioPieChart({
     const y2 = center + radius * Math.sin(end);
     const d = `M ${center} ${center} L ${x1} ${y1} A ${radius} ${radius} 0 ${large} 1 ${x2} ${y2} Z`;
     const label = `${it.label} · ${fmtMoney(it.value)}`;
-    const out = { d, color: it.color, start, end, label, idx };
+    // A lone slice spans the full circle, where the arc's start and end points coincide
+    // and the path renders as nothing — draw it as a circle instead.
+    const full = angle >= Math.PI * 2 - 1e-6;
+    const out = { d, full, color: it.color, start, end, label, idx };
     start = end;
     return out;
   });
@@ -79,15 +87,19 @@ export default function PortfolioPieChart({
       }}
     >
       <svg ref={svgRef} viewBox={`0 0 ${size} ${size}`} className="w-full h-[220px]">
-        {slices.map((s) => (
-          <path key={`slice-${s.idx}`} d={s.d} fill={s.color} />
-        ))}
+        {slices.map((s) =>
+          s.full ? (
+            <circle key={`slice-${s.idx}`} cx={center} cy={center} r={radius} fill={s.color} />
+          ) : (
+            <path key={`slice-${s.idx}`} d={s.d} fill={s.color} />
+          )
+        )}
         <circle cx={center} cy={center} r={radius * 0.55} fill="var(--background)" />
         <text x={center} y={center - 2} textAnchor="middle" fontSize="14" fill="var(--muted-foreground)">
-          Allocation
+          {centerTitle}
         </text>
         <text x={center} y={center + 16} textAnchor="middle" fontSize="16" fill="var(--foreground)" fontWeight="600">
-          {items.length} Symbols
+          {centerValue ?? `${items.length} Symbols`}
         </text>
       </svg>
       {hover && (

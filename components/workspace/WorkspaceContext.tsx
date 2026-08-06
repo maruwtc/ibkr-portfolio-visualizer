@@ -89,6 +89,8 @@ type WorkspaceContextValue = {
   currentUnrealized: number;
   holdingsAllocation: { label: string; value: number; color: string }[];
   cashAllocationNow: { label: string; value: number; color: string }[];
+  navComposition: { label: string; value: number; color: string }[];
+  navBreakdown: { label: string; value: number; color: string }[];
   chatContext: string;
 
   parseVersion: number;
@@ -147,6 +149,9 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
   const cashBalances: CashBalance[] = [];
   const mkId = (prefix: string, i: number) => `${prefix}-${i}-${Math.random().toString(16).slice(2)}`;
   const normalize = (s: string) => (s || '').trim();
+  // IBKR's Dividends / Withholding Tax sections carry no Symbol column: the ticker leads
+  // the description, e.g. "VTI(US9229087690) Cash Dividend USD 0.505 per Share".
+  const symbolFromDescription = (desc: string) => /^([A-Za-z0-9.\-]{1,8})\s*\(/.exec(normalize(desc))?.[1] ?? '';
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -194,10 +199,11 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
       const idxSymbol = getI(/^Symbol$/i);
       const idxDateTime = getI(/^Date\/Time$/i);
       const idxQty = getI(/^Quantity$/i);
-      const idxTPrice = getI(/^T\\.\\s*Price$/i);
+      const idxTPrice = getI(/^T\.\s*Price$/i);
       const idxProceeds = getI(/^Proceeds$/i);
       const idxFee = getI(/^Comm\/Fee$/i);
       const idxRealized = getI(/^Realized P\/L$/i);
+      const idxCode = getI(/^(Code|Notes\/Codes)$/i);
 
       const currency = normalize(getByIdx(idxCurrency));
       const iso = toISODate(getByIdx(idxDateTime));
@@ -218,7 +224,11 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
         const side: 'BUY' | 'SELL' | undefined = qty > 0 ? 'BUY' : qty < 0 ? 'SELL' : undefined;
         const absQty = Math.abs(qty);
 
-        const title = symbol ? `${symbol} ${side ?? ''}`.trim() : 'Trade';
+        // IBKR flags dividend-reinvestment buys with trade code R (e.g. "O;R").
+        const codes = normalize(getByIdx(idxCode)).split(/[;,\s]+/).filter(Boolean);
+        const isDrip = codes.includes('R');
+
+        const title = isDrip && symbol ? `${symbol} REINVEST` : symbol ? `${symbol} ${side ?? ''}`.trim() : 'Trade';
         const amount = realized + fee;
 
         txns.push({
@@ -227,8 +237,9 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
           type: 'TRADE',
           currency,
           title,
-          description: 'Realized P/L + Fees',
+          description: isDrip ? 'Dividend reinvestment (IBKR code R)' : 'Realized P/L + Fees',
           amount,
+          drip: isDrip || undefined,
           symbol: symbol || undefined,
           side,
           quantity: absQty || undefined,
@@ -248,9 +259,12 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
       const idxSymbol = getI(/^Symbol$/i);
       const idxAmount = getI(/^Amount$/i);
 
+      const idxDescription = getI(/^Description$/i);
+
       const date = toISODate(getByIdx(idxDate));
       const currency = normalize(getByIdx(idxCurrency));
-      const symbol = normalize(getByIdx(idxSymbol));
+      const description = normalize(getByIdx(idxDescription));
+      const symbol = normalize(getByIdx(idxSymbol)) || symbolFromDescription(description);
       const amount = safeNum(getByIdx(idxAmount));
 
       if (date && currency) {
@@ -265,7 +279,7 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
           type: 'DIVIDEND',
           currency,
           title: symbol ? `${symbol} Dividend` : 'Dividend',
-          description: '',
+          description,
           amount,
           symbol,
           raw: Object.fromEntries(header.map((h, j) => [h, row[state.offset + j] ?? ''])),
@@ -309,9 +323,12 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
       const idxSymbol = getI(/^Symbol$/i);
       const idxAmount = getI(/^Amount$/i);
 
+      const idxDescription = getI(/^Description$/i);
+
       const date = toISODate(getByIdx(idxDate));
       const currency = normalize(getByIdx(idxCurrency));
-      const symbol = normalize(getByIdx(idxSymbol));
+      const description = normalize(getByIdx(idxDescription));
+      const symbol = normalize(getByIdx(idxSymbol)) || symbolFromDescription(description);
       const amount = safeNum(getByIdx(idxAmount));
 
       if (date && currency) {
@@ -326,7 +343,7 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
           type: 'WHT',
           currency,
           title: symbol ? `${symbol} Withholding` : 'Withholding Tax',
-          description: '',
+          description,
           amount,
           symbol,
           raw: Object.fromEntries(header.map((h, j) => [h, row[state.offset + j] ?? ''])),
@@ -1114,6 +1131,54 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     return sorted.map((c, i) => ({ label: c.currency, value: Math.abs(c.valueBase), color: palette[i % palette.length] }));
   }, [cashBalances]);
 
+  const NAV_STOCK_COLOR = 'var(--chart-1)';
+  const NAV_CASH_COLOR = 'var(--chart-2)';
+  const NAV_OTHER_COLOR = 'var(--chart-3)';
+
+  /** Every NAV entry that is neither the total nor the stock/cash buckets. */
+  const navOtherClasses = useMemo(
+    () => Object.entries(navByClass).filter(([key]) => key !== 'total' && key !== 'stock' && key !== 'cash'),
+    [navByClass]
+  );
+
+  const navComposition = useMemo(() => {
+    const explicitOthers = navOtherClasses.reduce((acc, [, v]) => acc + v, 0);
+    // Prefer the residual against reported NAV — it also covers asset classes the
+    // statement reported only inside the total.
+    const others = currentNavTotal ? currentNavTotal - currentNavStock - currentNavCash : explicitOthers;
+
+    return [
+      { label: 'Stock', value: currentNavStock, color: NAV_STOCK_COLOR },
+      { label: 'Cash', value: currentNavCash, color: NAV_CASH_COLOR },
+      { label: 'Others', value: others, color: NAV_OTHER_COLOR },
+    ]
+      // The pie can only draw magnitudes; the breakdown list carries the real signs
+      // (cash goes negative on a margin debit).
+      .map((slice) => ({ ...slice, value: Math.abs(slice.value) }))
+      .filter((slice) => slice.value > 0.005);
+  }, [currentNavCash, currentNavStock, currentNavTotal, navOtherClasses]);
+
+  const navBreakdown = useMemo(() => {
+    // Everything outside stock/cash carries the Others colour, so this list reads as
+    // the legend of the three-slice composition chart.
+    const rows = [
+      { label: 'Stock', value: currentNavStock, color: NAV_STOCK_COLOR },
+      { label: 'Cash', value: currentNavCash, color: NAV_CASH_COLOR },
+      ...navOtherClasses.map(([key, value]) => ({
+        label: key.replace(/\b\w/g, (c) => c.toUpperCase()),
+        value,
+        color: NAV_OTHER_COLOR,
+      })),
+    ];
+
+    const residual = currentNavTotal
+      ? currentNavTotal - rows.reduce((acc, r) => acc + r.value, 0)
+      : 0;
+    if (Math.abs(residual) > 0.005) rows.push({ label: 'Other', value: residual, color: NAV_OTHER_COLOR });
+
+    return rows.filter((r) => Math.abs(r.value) > 0.005);
+  }, [currentNavCash, currentNavStock, currentNavTotal, navOtherClasses]);
+
   const chatContext = useMemo(() => {
     const topPositions = [...positions]
       .sort((a, b) => Math.abs(b.marketValue) - Math.abs(a.marketValue))
@@ -1260,6 +1325,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       currentUnrealized,
       holdingsAllocation,
       cashAllocationNow,
+      navComposition,
+      navBreakdown,
       chatContext,
       parseVersion,
     }),
@@ -1297,7 +1364,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       mode,
       monthStats,
       months,
+      navBreakdown,
       navByClass,
+      navComposition,
       notes,
       parseError,
       parseFiles,

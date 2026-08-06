@@ -13,6 +13,8 @@ export default function PortfolioPage() {
     currentUnrealized,
     holdingsAllocation,
     cashAllocationNow,
+    navComposition,
+    navBreakdown,
     series,
     totalCalendarPnl,
     portfolioPeriod,
@@ -36,6 +38,8 @@ export default function PortfolioPage() {
       currentUnrealized={currentUnrealized}
       holdingsAllocation={holdingsAllocation}
       cashAllocationNow={cashAllocationNow}
+      navComposition={navComposition}
+      navBreakdown={navBreakdown}
       series={series}
       totalCalendarPnl={totalCalendarPnl}
       portfolioPeriod={portfolioPeriod}

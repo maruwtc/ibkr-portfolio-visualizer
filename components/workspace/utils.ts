@@ -1,4 +1,4 @@
-import type { CalendarCell, DailyPoint, TxnType } from './types';
+import type { CalendarCell, DailyPoint, Transaction, TxnType } from './types';
 
 export function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -90,6 +90,27 @@ export function typeBadgeVariant(t: TxnType): 'default' | 'secondary' | 'outline
   if (t === 'DIVIDEND') return 'secondary';
   if (t === 'INTEREST') return 'outline';
   return 'destructive';
+}
+
+/**
+ * Cash a dividend reinvestment actually put back into the stock. Statements report a
+ * DRIP buy as a trade with no realized P/L, so the interesting number is the cost:
+ * proceeds when the statement gives them, otherwise quantity x price.
+ */
+export function reinvestedValue(t: Transaction): number | null {
+  if (!t.drip) return null;
+  const fromProceeds = t.proceeds !== undefined ? Math.abs(t.proceeds) : 0;
+  if (fromProceeds) return fromProceeds;
+  if (t.quantity !== undefined && t.tradePrice !== undefined) return Math.abs(t.quantity * t.tradePrice);
+  return null;
+}
+
+/** "0.1333 sh @ 180.00" — the share detail behind a reinvestment, when known. */
+export function fmtShareDetail(t: Transaction): string | null {
+  if (t.quantity === undefined && t.tradePrice === undefined) return null;
+  const qty = t.quantity !== undefined ? `${t.quantity.toLocaleString(undefined, { maximumFractionDigits: 6 })} sh` : null;
+  const price = t.tradePrice !== undefined ? `@ ${t.tradePrice.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : null;
+  return [qty, price].filter(Boolean).join(' ');
 }
 
 export function fmtMode(mode: string) {

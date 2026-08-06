@@ -3,8 +3,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import gsap from 'gsap';
+import { FileUp, Info, SlidersHorizontal, Upload } from 'lucide-react';
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
@@ -17,10 +18,12 @@ import NavTabs from '@/components/workspace/NavTabs';
 import useColumnResizer from '@/components/workspace/useColumnResizer';
 import Splitter from '@/components/workspace/Splitter';
 import RightPanel from '@/components/workspace/RightPanel';
+import BottomSheet from '@/components/workspace/BottomSheet';
+import TransactionFilters from '@/components/workspace/TransactionFilters';
 import ThemeToggle from '@/components/theme/ThemeToggle';
 import { WorkspaceProvider, useWorkspace } from '@/components/workspace/WorkspaceContext';
 import type { ActiveTab } from '@/components/workspace/types';
-import { fmtMode, fmtMoney } from '@/components/workspace/utils';
+import { fmtMode, fmtMoney, fmtTxnType } from '@/components/workspace/utils';
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(false);
@@ -74,6 +77,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
     clearChat,
     chatLoading,
     selectedTxn,
+    setSelectedTxn,
     activeMonth,
     monthStats,
     parseVersion,
@@ -83,11 +87,10 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const animRef = useRef<HTMLDivElement | null>(null);
 
   const isMobile = useMediaQuery('(max-width: 1024px)');
-  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
-  useEffect(() => {
-    if (isMobile && selectedTxn) setMobileInspectorOpen(true);
-  }, [isMobile, selectedTxn]);
+  const hasData = series.length > 0 || rawNames.length > 0;
 
   useEffect(() => {
     if (!parseVersion || !animRef.current) return;
@@ -119,7 +122,8 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
       el.removeEventListener('dragleave', onDragLeave);
       el.removeEventListener('drop', onDrop);
     };
-  }, [parseFiles]);
+    // isMobile swaps which element holds dropRef, so the listeners have to re-bind.
+  }, [parseFiles, isMobile, hasData]);
 
   const { containerRef: pageColsRef, sizes: pageColSizes, startDrag: startPageDrag } = useColumnResizer({
     left: 340,
@@ -149,6 +153,41 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
       monthStats={monthStats}
     />
   );
+
+  const mobileSubtitle = hasData
+    ? [fmtMode(mode).replace(' Mode', ''), transactions.length ? `${transactions.length} txns` : null, baseCurrency]
+        .filter(Boolean)
+        .join(' · ')
+    : 'No statement loaded';
+
+  // Phones surface only the filters that belong to the visible tab, inside a sheet.
+  const mobileFilters =
+    activeTab === 'transactions' ? (
+      <TransactionFilters stacked />
+    ) : activeTab === 'calendar' ? (
+      <div className="space-y-3">
+        <div className="text-sm font-medium">Currency view</div>
+        <div className="grid grid-cols-3 gap-2">
+          <Button size="sm" variant={selectedCurrency === 'ALL' ? 'default' : 'outline'} onClick={() => setSelectedCurrency('ALL')}>
+            ALL
+          </Button>
+          <Button size="sm" variant={selectedCurrency === 'BASE' ? 'default' : 'outline'} onClick={() => setSelectedCurrency('BASE')}>
+            Base · {baseCurrency}
+          </Button>
+          {currencies.map((ccy) => (
+            <Button key={ccy} size="sm" variant={selectedCurrency === ccy ? 'default' : 'outline'} onClick={() => setSelectedCurrency(ccy)}>
+              {ccy}
+            </Button>
+          ))}
+        </div>
+        <div className="text-xs text-muted-foreground">ALL adds currencies together without FX conversion.</div>
+      </div>
+    ) : null;
+
+  const mobileFilterSummary =
+    activeTab === 'transactions'
+      ? `${txnType === 'ALL' ? 'All types' : fmtTxnType(txnType)} · ${txnCurrency === 'ALL' ? 'All currencies' : txnCurrency}`
+      : currencyLabel;
 
   const viewControls = (() => {
     if (activeTab === 'calendar') {
@@ -239,111 +278,171 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
     <>
       <TooltipProvider>
         {isMobile ? (
-          <div className="p-4 pb-24 space-y-4">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <div className="text-lg font-semibold leading-tight">Portfolio Visualizer</div>
-                <div className="text-xs text-muted-foreground mt-1">Realized/cash calendar + ledger</div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="secondary" onClick={pickFiles}>
-                  Upload CSV / PDF
-                </Button>
-                <Button size="sm" variant="outline" onClick={clearAll} disabled={!series.length && rawNames.length === 0}>
-                  Clear
-                </Button>
-                <div className="flex items-center gap-2">
-                  <ThemeToggle />
+          <div className="flex min-h-screen flex-col bg-background">
+            <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur">
+              <div className="flex h-14 items-center gap-1 px-3">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-base font-semibold leading-tight">Portfolio Visualizer</div>
+                  <div className="truncate text-[11px] text-muted-foreground">{mobileSubtitle}</div>
                 </div>
+                <Button size="icon" variant="ghost" onClick={pickFiles} aria-label="Add statement">
+                  <Upload className="size-5" />
+                </Button>
+                <ThemeToggle />
+                <Button size="icon" variant="ghost" onClick={() => setDetailsOpen(true)} aria-label="Statement details">
+                  <Info className="size-5" />
+                </Button>
               </div>
-            </div>
 
-            <div className="space-y-3">
-              {isParsing && (
-                <Alert>
-                  <AlertTitle>Parsing…</AlertTitle>
-                  <AlertDescription>Reading files and building performance + transactions.</AlertDescription>
-                </Alert>
+              {hasData && mobileFilters && (
+                <button
+                  type="button"
+                  onClick={() => setFiltersOpen(true)}
+                  className="flex w-full items-center gap-2 border-t px-3 py-2 text-left active:bg-muted/50"
+                >
+                  <SlidersHorizontal className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="text-sm font-medium">Filters</span>
+                  <span className="ml-auto truncate text-xs text-muted-foreground">{mobileFilterSummary}</span>
+                </button>
               )}
+            </header>
 
-              {parseError && (
-                <Alert variant="destructive">
-                  <AlertTitle>Upload parse failed</AlertTitle>
-                  <AlertDescription>{parseError}</AlertDescription>
-                </Alert>
-              )}
+            <main className="flex-1 px-3 pb-24 pt-3">
+              <div className="space-y-3">
+                {isParsing && (
+                  <Alert>
+                    <AlertTitle>Parsing…</AlertTitle>
+                    <AlertDescription>Reading files and building performance + transactions.</AlertDescription>
+                  </Alert>
+                )}
 
-              {!series.length && !isParsing && (
-                <div ref={dropRef}>
-                  <Card className="border-dashed">
-                    <CardHeader>
-                      <CardTitle className="text-base">Drop CSV or PDF here</CardTitle>
-                      <CardDescription>IBKR Activity Statement (CSV) or Firstrade statement (PDF).</CardDescription>
-                    </CardHeader>
-                  </Card>
-                </div>
-              )}
+                {parseError && (
+                  <Alert variant="destructive">
+                    <AlertTitle>Upload parse failed</AlertTitle>
+                    <AlertDescription>{parseError}</AlertDescription>
+                  </Alert>
+                )}
 
-              {(series.length > 0 || rawNames.length > 0) && (
-                <>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {rawNames.length > 0 && <Badge variant="secondary">Files: {rawNames.length}</Badge>}
-                    <Badge>{fmtMode(mode)}</Badge>
-                    {mode !== 'UNKNOWN' && <Badge variant="outline">View: {currencyLabel}</Badge>}
-                    {series.length > 0 && <Badge variant="outline">Days: {series.length}</Badge>}
-                    {transactions.length > 0 && <Badge variant="outline">Txns: {transactions.length}</Badge>}
+                {!hasData && !isParsing ? (
+                  <div ref={dropRef} className="pt-10">
+                    <button
+                      type="button"
+                      onClick={pickFiles}
+                      className="flex w-full flex-col items-center rounded-2xl border border-dashed px-6 py-12 text-center active:bg-muted/50"
+                    >
+                      <FileUp className="size-8 text-muted-foreground" />
+                      <span className="mt-4 text-base font-semibold">Add a statement</span>
+                      <span className="mt-1 text-sm text-muted-foreground">
+                        IBKR Activity Statement (CSV) or Firstrade statement (PDF).
+                      </span>
+                    </button>
                   </div>
-
-                  <Separator />
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <StatCard title="Calendar Total P&L" value={fmtMoney(totalCalendarPnl)} />
-                    <StatCard title="Transactions" value={transactions.length.toLocaleString()} />
-                    <StatCard title="Base Currency" value={baseCurrency} />
-                  </div>
-
-                  {mode !== 'UNKNOWN' && viewControls && (
-                    <>
-                      <Separator />
-                      {viewControls}
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-
-            <Card className="rounded-2xl">
-              <CardContent className="space-y-4 pt-6">{children}</CardContent>
-            </Card>
-
-            {showSummaryPanel && (
-              <Card className="rounded-2xl">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-base font-semibold">Inspector</div>
-                      <div className="text-xs text-muted-foreground">
-                        {activeTab === 'transactions' ? 'Shows selected transaction details.' : 'Shows summary context.'}
+                ) : (
+                  <>
+                    {hasData && (
+                      <div className="-mx-3 flex snap-x gap-2 overflow-x-auto px-3 pb-1 [&::-webkit-scrollbar]:hidden [&>*]:min-w-[45%] [&>*]:shrink-0 [&>*]:snap-start">
+                        <StatCard title="Calendar P&L" value={fmtMoney(totalCalendarPnl)} />
+                        <StatCard title="Transactions" value={transactions.length.toLocaleString()} />
+                        <StatCard title="Base Currency" value={baseCurrency} />
                       </div>
-                    </div>
-                    <Button size="sm" variant="outline" onClick={() => setMobileInspectorOpen((v) => !v)}>
-                      {mobileInspectorOpen ? 'Hide' : 'Show'}
-                    </Button>
-                  </div>
-                </CardHeader>
-                {mobileInspectorOpen && <CardContent className="right-inspector">{rightPanel}</CardContent>}
-              </Card>
-            )}
+                    )}
 
-            <div className="fixed bottom-0 left-0 right-0 z-20 border-t bg-background/95 backdrop-blur h-16 flex items-center justify-center w-full">
-              <div className="flex items-center justify-center mx-auto max-w-6xl w-full px-4 py-2 gap-2">
+                    <div className="min-h-[55vh]">{children}</div>
+                  </>
+                )}
+              </div>
+            </main>
+
+            <nav className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
+              <div className="px-2 py-1">
                 <NavTabs
                   activeTab={activeTab}
                   labels={{ portfolio: 'Portfolio', transactions: 'Transactions', calendar: 'Calendar', chat: 'Chatbot' }}
                   isMobile
                 />
               </div>
-            </div>
+            </nav>
+
+            <BottomSheet
+              open={filtersOpen}
+              onClose={() => setFiltersOpen(false)}
+              title="Filters"
+              description={activeTab === 'transactions' ? 'Narrow down the ledger.' : 'Choose which currencies the calendar totals.'}
+            >
+              <div className="pb-2">{mobileFilters}</div>
+            </BottomSheet>
+
+            <BottomSheet
+              open={detailsOpen}
+              onClose={() => setDetailsOpen(false)}
+              title="Statement"
+              description={hasData ? fmtMode(mode) : 'Nothing loaded yet.'}
+            >
+              <div className="space-y-4 pb-2">
+                {hasData && (
+                  <div className="flex flex-wrap gap-2">
+                    {mode !== 'UNKNOWN' && <Badge variant="outline">View: {currencyLabel}</Badge>}
+                    {series.length > 0 && <Badge variant="outline">Days: {series.length}</Badge>}
+                    {transactions.length > 0 && <Badge variant="outline">Txns: {transactions.length}</Badge>}
+                  </div>
+                )}
+
+                {rawNames.length > 0 && (
+                  <div className="space-y-1">
+                    <div className="text-sm font-medium">Files</div>
+                    {rawNames.map((n) => (
+                      <div key={n} className="truncate text-xs text-muted-foreground">
+                        {n}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {notes.length > 0 && (
+                  <div className="space-y-1">
+                    <div className="text-sm font-medium">Parser notes</div>
+                    {notes.map((n, i) => (
+                      <div key={i} className="text-xs text-muted-foreground">
+                        • {n}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <Separator />
+
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setDetailsOpen(false);
+                      pickFiles();
+                    }}
+                  >
+                    Add statement
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setDetailsOpen(false);
+                      clearAll();
+                    }}
+                    disabled={!hasData}
+                  >
+                    Clear data
+                  </Button>
+                </div>
+              </div>
+            </BottomSheet>
+
+            <BottomSheet
+              open={activeTab === 'transactions' && !!selectedTxn}
+              onClose={() => setSelectedTxn(null)}
+              title="Transaction"
+              description={selectedTxn?.title}
+            >
+              <div className="right-inspector pb-2">{rightPanel}</div>
+            </BottomSheet>
           </div>
         ) : (
           <div ref={pageColsRef} className="p-4">

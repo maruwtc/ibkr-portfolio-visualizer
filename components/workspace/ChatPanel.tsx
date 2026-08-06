@@ -27,8 +27,10 @@ export default function ChatPanel() {
 
   return (
     <div>
-      <div className="text-lg font-semibold">Portfolio Chatbot</div>
-      <div className="text-sm text-muted-foreground">Ask questions about the loaded statement data using local Ollama.</div>
+      <div className="hidden lg:block">
+        <div className="text-lg font-semibold">Portfolio Chatbot</div>
+        <div className="text-sm text-muted-foreground">Ask questions about the loaded statement data using local Ollama.</div>
+      </div>
       <div className="space-y-4">
         <div className="flex flex-col gap-2">
           <div className="text-sm text-muted-foreground">Provider</div>
@@ -72,7 +74,7 @@ export default function ChatPanel() {
           {chatError && <div className="text-sm text-destructive">{chatError}</div>}
         </div>
 
-        <div className="rounded-xl border p-3 h-[360px] overflow-y-auto space-y-3">
+        <div className="h-[50vh] space-y-3 overflow-y-auto lg:h-[360px] lg:rounded-xl lg:border lg:p-3">
           {chatMessages.length === 0 && (
             <div className="text-sm text-muted-foreground">
               Ask things like “What is my current net liquidation value?” or “Top 5 holdings by market value”.
