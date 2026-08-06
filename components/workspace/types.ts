@@ -18,7 +18,7 @@ export type CurrencyDaily = {
   };
 };
 
-export type TxnType = 'TRADE' | 'DIVIDEND' | 'INTEREST' | 'WHT';
+export type TxnType = 'TRADE' | 'DIVIDEND' | 'INTEREST' | 'WHT' | 'FEE';
 
 export type Transaction = {
   id: string;
@@ -70,6 +70,18 @@ export type MonthStats = {
   winDays: number;
   best: DailyPoint;
   worst: DailyPoint;
+};
+
+/** Normalized output of a single statement file, regardless of broker or format. */
+export type ParsedStatement = {
+  baseCurrency: string | null;
+  currencyDaily: CurrencyDaily[];
+  transactions: Transaction[];
+  navByClass: Record<string, number>;
+  positions: Position[];
+  cashBalances: CashBalance[];
+  statementTimestamp: number | null;
+  notes: string[];
 };
 
 export type Sizes = { left: number; mid: number; right: number };

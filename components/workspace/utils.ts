@@ -78,6 +78,8 @@ export function fmtTxnType(t: TxnType) {
       return 'Interest';
     case 'WHT':
       return 'Withholding Tax';
+    case 'FEE':
+      return 'Fee';
     default:
       return t;
   }
@@ -88,6 +90,19 @@ export function typeBadgeVariant(t: TxnType): 'default' | 'secondary' | 'outline
   if (t === 'DIVIDEND') return 'secondary';
   if (t === 'INTEREST') return 'outline';
   return 'destructive';
+}
+
+export function fmtMode(mode: string) {
+  switch (mode) {
+    case 'IBKR_STATEMENT':
+      return 'IBKR Statement Mode';
+    case 'FIRSTRADE_STATEMENT':
+      return 'Firstrade Statement Mode';
+    case 'MIXED':
+      return 'Mixed Statement Mode';
+    default:
+      return 'Unknown Mode';
+  }
 }
 
 export function buildMonthGrid(year: number, monthIndex0: number, dailyMap: Map<string, DailyPoint>): CalendarCell[] {

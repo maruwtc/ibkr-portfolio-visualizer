@@ -28,7 +28,7 @@ export default function ChatPanel() {
   return (
     <div>
       <div className="text-lg font-semibold">Portfolio Chatbot</div>
-      <div className="text-sm text-muted-foreground">Ask questions about the loaded CSV data using local Ollama.</div>
+      <div className="text-sm text-muted-foreground">Ask questions about the loaded statement data using local Ollama.</div>
       <div className="space-y-4">
         <div className="flex flex-col gap-2">
           <div className="text-sm text-muted-foreground">Provider</div>

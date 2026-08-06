@@ -1,8 +1,8 @@
 # IBKR Portfolio Management Dashboard
 
-A client-side **Interactive Brokers (IBKR) Activity Statement analyzer** built with **Next.js + React + Shadcn/UI**.
+A client-side **broker statement analyzer** built with **Next.js + React + Shadcn/UI**, supporting **Interactive Brokers (IBKR) Activity Statement CSVs** and **Firstrade statement PDFs**.
 
-It converts IBKR CSV statements into a **realized P&L calendar**, **transaction ledger**, and **currency-aware performance view** for traders who want **cash-based clarity instead of broker UI noise**.
+It converts those statements into a **realized P&L calendar**, **transaction ledger**, and **currency-aware performance view** for traders who want **cash-based clarity instead of broker UI noise**.
 
 - Realized only
 - No unrealized mark-to-market
@@ -23,9 +23,9 @@ Calendar P&L = **Realized trades + fees + dividends + interest + withholding tax
 
 ### Transaction Ledger
 - Normalized transaction table
-- Types: trades, dividends, interest, withholding tax
+- Types: trades, dividends, interest, withholding tax, fees
 - Filters: search (symbol/description), type, currency, sorting (date/amount)
-- Inspector: trade direction, quantity, price, fees, realized P/L, raw CSV fields
+- Inspector: trade direction, quantity, price, fees, realized P/L, raw statement fields
 
 ### Multi-Currency Aware
 - Detects base currency and transaction currencies from statements
@@ -37,7 +37,7 @@ Calendar P&L = **Realized trades + fees + dividends + interest + withholding tax
 - Mobile: stacked layout with collapsible inspector and touch-friendly calendar
 
 ### Multi-File Support
-- Upload multiple IBKR CSV files at once
+- Upload multiple IBKR CSV and Firstrade PDF files at once (drag & drop or file picker)
 - Merges daily P&L and transactions
 - Detects base currency mismatches
 - Adds parser notes per file
@@ -64,7 +64,9 @@ If you want true total return, export `NetLiquidation / Daily NAV` from IBKR sep
 
 ---
 
-## Supported IBKR Statement Format
+## Supported Statement Formats
+
+### IBKR Activity Statement (CSV)
 
 Expected CSV sections:
 
@@ -81,6 +83,19 @@ Supported sections:
 
 Other sections are ignored safely.
 
+### Firstrade Statement (PDF)
+
+Text is extracted in the browser with pdf.js and parsed line by line, so the parser
+tolerates the layout drift between Firstrade statement types:
+
+- Account summary: total account value, cash, market value of securities
+- Holdings: accepted only when quantity x price reconciles with market value
+- Activity: trades, dividends, interest, withholding tax, fees
+
+Firstrade statements do not report realized P/L, so trades appear in the ledger but
+are excluded from calendar P&L; dividends, interest, withholding and fees are included.
+Scanned (image-only) PDFs have no text layer and are skipped with a parser note.
+
 ---
 
 ## Tech Stack
@@ -91,6 +106,7 @@ Other sections are ignored safely.
 - Shadcn/UI
 - Tailwind CSS
 - PapaParse (CSV parsing)
+- pdf.js / pdfjs-dist (PDF text extraction, in-browser)
 - GSAP (light UI animation)
 
 No backend, database, or network calls. Everything runs locally in the browser.
@@ -104,6 +120,10 @@ app/
   page.tsx          # Main dashboard
 components/
   ui/               # shadcn components
+  workspace/
+    WorkspaceContext.tsx  # upload dispatch, IBKR CSV parser, aggregation
+    firstrade.ts          # Firstrade PDF statement parser
+    pdf.ts                # in-browser PDF text extraction (pdf.js)
 lib/
   utils             # helper logic
 ```
@@ -157,7 +177,7 @@ Transaction {
 
 ## Important Notes
 
-- All numbers come directly from the IBKR CSV
+- All numbers come directly from the uploaded statement
 - No rounding beyond display formatting
 - No inferred FX
 - No guessing of unrealized values

@@ -3,10 +3,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import Papa from 'papaparse';
 
-import type { CashBalance, CurrencyDaily, DailyPoint, MonthStats, Position, Transaction, TxnType } from './types';
+import type { CashBalance, CurrencyDaily, DailyPoint, MonthStats, ParsedStatement, Position, Transaction, TxnType } from './types';
 import { buildMonthGrid, monthKey, safeNum, toISODate } from './utils';
+import { extractPdfLines } from './pdf';
+import { looksLikeFirstradeStatement, parseFirstradeStatement } from './firstrade';
 
-type WorkspaceMode = 'IBKR_STATEMENT' | 'UNKNOWN';
+type WorkspaceMode = 'IBKR_STATEMENT' | 'FIRSTRADE_STATEMENT' | 'MIXED' | 'UNKNOWN';
 
 type WorkspaceContextValue = {
   rawNames: string[];
@@ -96,6 +98,10 @@ const STORAGE_KEY = 'ibkr_portfolio_state_v1';
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
+function isPdfFile(file: File): boolean {
+  return file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+}
+
 function looksLikeIBKRStatement(rows: string[][]): boolean {
   const r0 = rows[0] || [];
   return (r0[0] || '').trim() === 'Statement' && (r0[1] || '').trim() === 'Header';
@@ -110,16 +116,7 @@ function parseTimestamp(input: string): number | null {
   return Number.isNaN(tt) ? null : tt;
 }
 
-function parseIBKRStatement(rows: string[][]): {
-  baseCurrency: string | null;
-  currencyDaily: CurrencyDaily[];
-  transactions: Transaction[];
-  navByClass: Record<string, number>;
-  positions: Position[];
-  cashBalances: CashBalance[];
-  statementTimestamp: number | null;
-  notes: string[];
-} {
+function parseIBKRStatement(rows: string[][]): ParsedStatement {
   const notes: string[] = [];
   let baseCurrency: string | null = null;
   let statementTimestamp: number | null = null;
@@ -615,27 +612,57 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         const baseCurrencySet = new Set<string>();
 
         let previewSet = false;
+        const detectedModes = new Set<WorkspaceMode>();
 
         for (const file of list) {
-          const text = await file.text();
-          const raw = Papa.parse<string[]>(text, { header: false, skipEmptyLines: true, dynamicTyping: false });
+          let out: ParsedStatement | null = null;
+          let preview: string[][] | null = null;
 
-          const rows = (raw.data || []).map((r) => (r || []).map((x) => String(x ?? '')));
+          if (isPdfFile(file)) {
+            const lines = await extractPdfLines(file);
 
-          if (!rows.length) {
-            perFileNotes.push({ file: file.name, notes: ['CSV has no rows.'] });
-            continue;
+            if (!lines.length) {
+              perFileNotes.push({
+                file: file.name,
+                notes: ['PDF has no extractable text (scanned image?). Skipped.'],
+              });
+              continue;
+            }
+
+            if (!looksLikeFirstradeStatement(lines)) {
+              perFileNotes.push({
+                file: file.name,
+                notes: ['Not a recognized Firstrade PDF statement. Skipped.'],
+              });
+              continue;
+            }
+
+            out = parseFirstradeStatement(lines);
+            preview = lines.map((l) => [l]);
+            detectedModes.add('FIRSTRADE_STATEMENT');
+          } else {
+            const text = await file.text();
+            const raw = Papa.parse<string[]>(text, { header: false, skipEmptyLines: true, dynamicTyping: false });
+
+            const rows = (raw.data || []).map((r) => (r || []).map((x) => String(x ?? '')));
+
+            if (!rows.length) {
+              perFileNotes.push({ file: file.name, notes: ['CSV has no rows.'] });
+              continue;
+            }
+
+            if (!looksLikeIBKRStatement(rows)) {
+              perFileNotes.push({
+                file: file.name,
+                notes: ['Not IBKR Activity Statement CSV (Statement/Header/Data). Skipped.'],
+              });
+              continue;
+            }
+
+            out = parseIBKRStatement(rows);
+            preview = rows;
+            detectedModes.add('IBKR_STATEMENT');
           }
-
-          if (!looksLikeIBKRStatement(rows)) {
-            perFileNotes.push({
-              file: file.name,
-              notes: ['Not IBKR Activity Statement CSV (Statement/Header/Data). Skipped.'],
-            });
-            continue;
-          }
-
-          const out = parseIBKRStatement(rows);
 
           if (out.baseCurrency) {
             baseCurrencySet.add(out.baseCurrency);
@@ -658,8 +685,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
             };
           }
 
-          if (!previewSet) {
-            setRawPreview(rows.slice(0, 120));
+          if (!previewSet && preview) {
+            setRawPreview(preview.slice(0, 120));
             previewSet = true;
           }
         }
@@ -668,12 +695,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           !!bestState &&
           (Object.keys(bestState.navByClass || {}).length > 0 || bestState.positions.length > 0 || bestState.cashBalances.length > 0);
         if (!allCurrencyDaily.length && !allTxns.length && !hasState) {
-          setParseError('No valid IBKR statement data found in the selected files.');
+          setParseError('No valid IBKR (CSV) or Firstrade (PDF) statement data found in the selected files.');
           setIsParsing(false);
           return;
         }
 
-        setMode('IBKR_STATEMENT');
+        setMode(detectedModes.size > 1 ? 'MIXED' : ([...detectedModes][0] ?? 'UNKNOWN'));
 
         if (detectedBaseCurrency) {
           setBaseCurrency(detectedBaseCurrency);
@@ -716,7 +743,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const pickFiles = useCallback(() => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.csv,text/csv';
+    input.accept = '.csv,text/csv,.pdf,application/pdf';
     input.multiple = true;
     input.onchange = () => {
       const fs = Array.from(input.files || []);
@@ -901,14 +928,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }, [currencyDaily]);
 
   const currencyLabel = useMemo(() => {
-    if (mode !== 'IBKR_STATEMENT') return '';
+    if (mode === 'UNKNOWN') return '';
     if (selectedCurrency === 'BASE') return `Base (${baseCurrency})`;
     if (selectedCurrency === 'ALL') return 'ALL (no FX)';
     return selectedCurrency;
   }, [mode, selectedCurrency, baseCurrency]);
 
   useEffect(() => {
-    if (mode !== 'IBKR_STATEMENT') return;
+    if (mode === 'UNKNOWN') return;
     rebuildSeriesFromCurrencyDaily(currencyDaily, baseCurrency, selectedCurrency);
   }, [mode, currencyDaily, baseCurrency, selectedCurrency, rebuildSeriesFromCurrencyDaily]);
 
@@ -1135,7 +1162,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const systemPrompt =
-        'You are a portfolio assistant. Answer using only the provided CSV data. If the answer is not in the data, say you do not know. Be concise.';
+        'You are a portfolio assistant. Answer using only the provided statement data. If the answer is not in the data, say you do not know. Be concise.';
       const res = await fetch('/api/llm/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

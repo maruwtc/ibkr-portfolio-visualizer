@@ -35,9 +35,9 @@ export default function HomePage() {
 
             <div className="rounded-2xl border p-4 space-y-3">
               <div className="text-sm text-muted-foreground">What you can do</div>
-              <div className="text-base font-semibold">Upload IBKR Activity Statements</div>
+              <div className="text-base font-semibold">Upload IBKR & Firstrade Statements</div>
               <div className="text-sm text-muted-foreground">
-                Analyze realized P&L, inspect transactions, and view current state snapshots from your CSV files.
+                Analyze realized P&L, inspect transactions, and view current state snapshots from IBKR Activity Statement CSVs and Firstrade PDF statements.
               </div>
               <div className="text-sm text-muted-foreground">
                 Use the Chatbot page to ask questions powered by your local LLM.
@@ -47,7 +47,7 @@ export default function HomePage() {
             <div className="rounded-2xl border p-4 space-y-3">
               <div className="text-sm text-muted-foreground">Tips</div>
               <div className="text-sm text-muted-foreground">
-                Drag and drop multiple CSVs to merge periods. For the most recent portfolio state, upload the latest statement.
+                Drag and drop multiple CSV or PDF statements to merge periods. For the most recent portfolio state, upload the latest statement.
               </div>
               <div className="text-sm text-muted-foreground">
                 Current state data comes from Net Asset Value, Mark-to-Market Performance Summary, and Forex Balances sections.

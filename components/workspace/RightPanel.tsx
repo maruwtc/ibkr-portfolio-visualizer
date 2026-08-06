@@ -6,7 +6,7 @@ import { Separator } from '@/components/ui/separator';
 
 import InspectorField from './InspectorField';
 import type { ActiveTab, MonthStats, Transaction } from './types';
-import { fmtMoney, fmtTxnType, typeBadgeVariant } from './utils';
+import { fmtMode, fmtMoney, fmtTxnType, typeBadgeVariant } from './utils';
 
 export default function RightPanel({
   activeTab,
@@ -37,9 +37,9 @@ export default function RightPanel({
     return (
       <div className="h-full">
         <div className="text-base">Quick Help</div>
-        <div className="text-sm text-muted-foreground">Upload IBKR Activity Statement CSV to start.</div>
+        <div className="text-sm text-muted-foreground">Upload an IBKR Activity Statement (CSV) or a Firstrade statement (PDF) to start.</div>
         <div className="space-y-1 mt-3 text-sm">
-          <div>• Drag & drop CSV on the left panel.</div>
+          <div>• Drag & drop CSV or PDF files on the left panel.</div>
           <div>• Calendar is realized/cash only (no unrealized MTM).</div>
           <div>• Use Transactions tab for detailed ledger.</div>
         </div>
@@ -113,7 +113,7 @@ export default function RightPanel({
               {rawNames.length > 1 ? ` +${rawNames.length - 1}` : ''}
             </Badge>
           )}
-          <Badge>{mode === 'IBKR_STATEMENT' ? 'IBKR Statement Mode' : 'Unknown'}</Badge>
+          <Badge>{fmtMode(mode)}</Badge>
         </div>
 
         {monthStats && (
