@@ -242,7 +242,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
           <div className="p-4 pb-24 space-y-4">
             <div className="flex items-start justify-between gap-2">
               <div>
-                <div className="text-lg font-semibold leading-tight">IBKR Portfolio Management</div>
+                <div className="text-lg font-semibold leading-tight">Portfolio Visualizer</div>
                 <div className="text-xs text-muted-foreground mt-1">Realized/cash calendar + ledger</div>
               </div>
               <div className="flex items-center gap-2">
@@ -368,7 +368,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
 
                     <div className="flex items-center justify-between">
                       <div>
-                        <div className="text-xl font-semibold">IBKR Portfolio Management</div>
+                        <div className="text-xl font-semibold">Portfolio Visualizer</div>
                         <div className="text-sm text-muted-foreground">Realized/cash calendar + ledger</div>
                       </div>
                       <div className="flex items-center gap-2">

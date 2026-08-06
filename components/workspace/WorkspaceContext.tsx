@@ -94,6 +94,8 @@ type WorkspaceContextValue = {
   parseVersion: number;
 };
 
+// Kept under the original name after the rename: changing it would drop the
+// state already cached in existing users' browsers.
 const STORAGE_KEY = 'ibkr_portfolio_state_v1';
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);

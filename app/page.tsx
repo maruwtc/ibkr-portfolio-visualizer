@@ -6,7 +6,7 @@ export default function HomePage() {
       <div className="mx-auto p-4">
         <div className="h-[calc(100vh-2rem)] rounded-2xl border overflow-hidden bg-background">
           <div className="p-5 border-b">
-            <div className="text-2xl font-semibold">IBKR Portfolio Visualizer</div>
+            <div className="text-2xl font-semibold">Portfolio Visualizer</div>
             <div className="text-sm text-muted-foreground mt-1">
               Choose a workspace view to explore your activity statement data.
             </div>

@@ -1,4 +1,4 @@
-# IBKR Portfolio Management Dashboard
+# Portfolio Visualizer
 
 A client-side **broker statement analyzer** built with **Next.js + React + Shadcn/UI**, supporting **Interactive Brokers (IBKR) Activity Statement CSVs** and **Firstrade statement PDFs**.
 
