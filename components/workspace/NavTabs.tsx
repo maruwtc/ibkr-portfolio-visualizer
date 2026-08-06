@@ -28,13 +28,34 @@ export default function NavTabs({
   isMobile?: boolean;
 }) {
   const router = useRouter();
-  const listClassName = isMobile
-    ? 'flex w-full justify-between items-center border-b-0 p-0 bg-transparent'
-    : 'flex w-full justify-between items-center border-b-0 p-0 bg-transparent border border-muted-foreground/20 rounded-full backdrop-blur-xs';
+
+  // Phones get a labelled bottom bar; tooltips are pointless without a cursor.
+  if (isMobile) {
+    return (
+      <Tabs value={activeTab} className="w-full">
+        <TabsList className="flex h-auto w-full items-stretch justify-between border-b-0 bg-transparent p-0">
+          {TABS.map(({ key, href, Icon }) => (
+            <TabsTrigger
+              key={key}
+              value={key}
+              className={cn(
+                'flex h-auto flex-1 flex-col gap-1 rounded-lg px-1 py-1.5 text-[11px] font-medium',
+                activeTab === key ? 'text-foreground' : 'text-muted-foreground'
+              )}
+              onClick={() => router.push(href)}
+            >
+              <Icon className={cn('size-5', activeTab === key && 'stroke-[2.5]')} />
+              {labels[key]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+    );
+  }
 
   return (
     <Tabs value={activeTab} className="w-full">
-      <TabsList className={listClassName}>
+      <TabsList className="flex w-full items-center justify-between rounded-full border border-muted-foreground/20 border-b-0 bg-transparent p-0 backdrop-blur-xs">
         {TABS.map(({ key, href, Icon }) => (
           <Tooltip key={key}>
             <TooltipTrigger asChild>

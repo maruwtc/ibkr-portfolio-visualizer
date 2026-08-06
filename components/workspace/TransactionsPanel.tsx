@@ -1,11 +1,10 @@
 'use client';
 
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 
+import TransactionFilters from './TransactionFilters';
 import { useWorkspace } from './WorkspaceContext';
 import { fmtMoney, fmtShareDetail, fmtTxnType, reinvestedValue, typeBadgeVariant } from './utils';
 
@@ -13,15 +12,6 @@ export default function TransactionsPanel() {
   const {
     filteredTxns,
     txnSummary,
-    txnSearch,
-    setTxnSearch,
-    txnType,
-    setTxnType,
-    txnCurrency,
-    setTxnCurrency,
-    txnCurrenciesAvailable,
-    txnSort,
-    setTxnSort,
     selectedTxn,
     setSelectedTxn,
   } = useWorkspace();
@@ -31,10 +21,13 @@ export default function TransactionsPanel() {
 
   return (
     <div className="h-full flex flex-col min-h-0">
-      <div className="text-lg font-semibold">Transactions</div>
-      <div className="text-sm text-muted-foreground">Filter and click rows. Inspector is on the right panel.</div>
-      <div className="mt-4 space-y-4 flex-1 min-h-0 flex flex-col">
-        <div className="flex items-center gap-2 flex-wrap">
+      {/* The mobile shell already names the view in its app bar and tab bar. */}
+      <div className="hidden lg:block">
+        <div className="text-lg font-semibold">Transactions</div>
+        <div className="text-sm text-muted-foreground">Filter and tap a row to inspect it.</div>
+      </div>
+      <div className="space-y-4 flex-1 min-h-0 flex flex-col lg:mt-4">
+        <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1 lg:flex-wrap lg:overflow-visible [&>*]:shrink-0">
           <Badge variant="outline">Rows: {filteredTxns.length}</Badge>
           <Badge variant="outline">Total: {fmtMoney(txnSummary.total)}</Badge>
           {(['TRADE', 'DIVIDEND', 'INTEREST', 'WHT', 'FEE'] as const).map((t) => (
@@ -45,65 +38,12 @@ export default function TransactionsPanel() {
           {reinvestedTotal > 0 && <Badge variant="outline">Reinvested: {fmtMoney(reinvestedTotal)}</Badge>}
         </div>
 
-        <Separator />
-
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <div className="md:col-span-2 space-y-2">
-            <div className="text-sm font-medium">Search</div>
-            <Input value={txnSearch} onChange={(e) => setTxnSearch(e.target.value)} placeholder="Symbol / description…" />
-          </div>
-
-          <div className="space-y-2">
-            <div className="text-sm font-medium">Type</div>
-            <Select value={txnType} onValueChange={(v) => setTxnType(v as any)}>
-              <SelectTrigger>
-                <SelectValue placeholder="Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">All Types</SelectItem>
-                <SelectItem value="TRADE">Trade</SelectItem>
-                <SelectItem value="DIVIDEND">Dividend</SelectItem>
-                <SelectItem value="INTEREST">Interest</SelectItem>
-                <SelectItem value="WHT">Withholding Tax</SelectItem>
-                <SelectItem value="FEE">Fee</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <div className="text-sm font-medium">Currency</div>
-            <Select value={txnCurrency} onValueChange={(v) => setTxnCurrency(v as any)}>
-              <SelectTrigger>
-                <SelectValue placeholder="Currency" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">All Currencies</SelectItem>
-                {txnCurrenciesAvailable.map((ccy) => (
-                  <SelectItem key={ccy} value={ccy}>
-                    {ccy}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        {/* Mobile drives these from the filter sheet in the workspace shell. */}
+        <div className="hidden lg:block lg:space-y-4">
+          <Separator />
+          <TransactionFilters />
+          <Separator />
         </div>
-
-        <div className="space-y-2">
-          <div className="text-sm font-medium">Sort</div>
-          <Select value={txnSort} onValueChange={(v) => setTxnSort(v as any)}>
-            <SelectTrigger className="max-w-xs">
-              <SelectValue placeholder="Sort" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="DATE_DESC">Date (new → old)</SelectItem>
-              <SelectItem value="DATE_ASC">Date (old → new)</SelectItem>
-              <SelectItem value="AMOUNT_DESC">Amount (high → low)</SelectItem>
-              <SelectItem value="AMOUNT_ASC">Amount (low → high)</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <Separator />
 
         <div className="rounded-xl border overflow-hidden flex-1 min-h-0 flex flex-col">
           <div className="p-3 border-b flex items-center justify-between">

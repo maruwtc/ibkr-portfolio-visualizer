@@ -55,8 +55,10 @@ export default function CalendarPanel() {
 
   return (
     <div>
-      <div className="text-lg font-semibold">Calendar</div>
-      <div className="text-sm text-muted-foreground">Hover cells for a quick view.</div>
+      <div className="hidden lg:block">
+        <div className="text-lg font-semibold">Calendar</div>
+        <div className="text-sm text-muted-foreground">Hover cells for a quick view.</div>
+      </div>
       <div className="mt-4 space-y-4">
         {!activeMonth && (
           <Alert>
@@ -69,7 +71,7 @@ export default function CalendarPanel() {
 
         {monthStats && (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <StatCard title="Month P&L" value={fmtMoney(monthStats.sumPnl)} />
               <StatCard title="Win Days" value={`${monthStats.winDays}/${monthStats.days}`} />
               <StatCard

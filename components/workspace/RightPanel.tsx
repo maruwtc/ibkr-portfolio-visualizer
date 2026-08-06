@@ -49,12 +49,13 @@ export default function RightPanel({
 
   if (activeTab === 'transactions') {
     return (
-      <Card className="h-full">
-        <CardHeader>
+      // Inside the mobile sheet the card chrome and heading are redundant.
+      <Card className="h-full border-0 py-0 shadow-none lg:border lg:py-6 lg:shadow-sm">
+        <CardHeader className="hidden lg:grid">
           <CardTitle className="text-base">Transaction Inspector</CardTitle>
           <CardDescription>Click a row to drill down.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-3 px-0 lg:px-6">
           {!selectedTxn ? (
             <div className="text-sm text-muted-foreground">No transaction selected.</div>
           ) : (
