@@ -7,7 +7,6 @@ import type {
   CashBalance,
   CloudAccount,
   CloudConnection,
-  CloudSession,
   CloudStatus,
   CurrencyDaily,
   DailyPoint,
@@ -44,7 +43,6 @@ type WorkspaceContextValue = {
 
   sourceMode: SourceMode;
   cloudStatus: CloudStatus | null;
-  cloudSession: CloudSession | null;
   cloudAccounts: CloudAccount[];
   cloudConnections: CloudConnection[];
   cloudBusy: '' | 'sync';
@@ -137,15 +135,11 @@ type WorkspaceContextValue = {
   parseVersion: number;
 };
 
-// Kept under the original name after the rename: changing it would drop the
-// state already cached in existing users' browsers.
-const STORAGE_KEY = 'ibkr_portfolio_state_v1';
-
-// Both outlive "Clear", which only drops the loaded statement: one is a preference,
-// the other records that this browser has enabled the server's Personal integration.
+// Local statements may persist in the browser. Cloud portfolio data is deliberately
+// session-only so it cannot survive logout or appear under another Auth0 account.
+const LEGACY_STORAGE_KEY = 'ibkr_portfolio_state_v1';
+const LOCAL_STORAGE_KEY = 'ibkr_portfolio_local_state_v1';
 const SOURCE_MODE_KEY = 'pv_source_mode_v1';
-const CLOUD_SESSION_KEY = 'pv_cloud_session_v1';
-const CLOUD_CACHE_KEY = 'pv_cloud_cache_v1';
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
@@ -661,7 +655,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // Local is the default: nothing is fetched, and no server is required.
   const [sourceMode, setSourceModeState] = useState<SourceMode>('local');
   const [cloudStatus, setCloudStatus] = useState<CloudStatus | null>(null);
-  const [cloudSession, setCloudSession] = useState<CloudSession | null>(null);
   const [cloudAccounts, setCloudAccounts] = useState<CloudAccount[]>([]);
   const [cloudConnections, setCloudConnections] = useState<CloudConnection[]>([]);
   const [cloudBusy, setCloudBusy] = useState<'' | 'sync'>('');
@@ -933,7 +926,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     input.click();
   }, [parseFiles]);
 
-  const clearAll = useCallback(() => {
+  const resetWorkspace = useCallback(() => {
     setRawNames([]);
     setIsParsing(false);
     setParseError('');
@@ -954,36 +947,33 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setTxnCurrency('ALL');
     setTxnSort('DATE_DESC');
     setSelectedTxn(null);
-    if (typeof window !== 'undefined') {
+    setChatMessages([]);
+    setChatInput('');
+    setChatError('');
+  }, []);
+
+  const clearAll = useCallback(() => {
+    resetWorkspace();
+    if (sourceMode === 'local' && typeof window !== 'undefined') {
       try {
-        window.localStorage.removeItem(STORAGE_KEY);
+        window.localStorage.removeItem(LOCAL_STORAGE_KEY);
       } catch {
         // ignore storage errors
       }
     }
-  }, []);
-
-  const persistCloudSession = useCallback((session: CloudSession | null) => {
-    setCloudSession(session);
-    if (typeof window === 'undefined') return;
-    try {
-      if (session) window.localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify(session));
-      else window.localStorage.removeItem(CLOUD_SESSION_KEY);
-    } catch {
-      // ignore storage errors
-    }
-  }, []);
+  }, [resetWorkspace, sourceMode]);
 
   const checkCloudStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/cloud/status', { cache: 'no-store' });
       if (!res.ok) throw new Error(`status ${res.status}`);
       const data = await res.json();
+      const authenticated = !!data?.authenticated;
       setCloudStatus({
         provider: typeof data?.provider === 'string' ? data.provider : 'snaptrade',
         available: !!data?.available,
         reason: typeof data?.reason === 'string' ? data.reason : null,
-        authenticated: !!data?.authenticated,
+        authenticated,
         configured: !!data?.configured,
         authEnabled: !!data?.authEnabled,
         databaseEnabled: !!data?.databaseEnabled,
@@ -997,6 +987,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
               }
             : null,
       });
+      if (!authenticated) {
+        setCloudAccounts([]);
+        setCloudConnections([]);
+        setCloudSyncedAt(null);
+        if (sourceMode === 'cloud') resetWorkspace();
+      }
     } catch {
       // A statically exported build serves no API routes at all, and that failure is
       // itself the answer: this deployment cannot reach a broker.
@@ -1013,10 +1009,60 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         user: null,
       });
     }
-  }, []);
+  }, [resetWorkspace, sourceMode]);
+
+  const restoreLocalWorkspace = useCallback(() => {
+    resetWorkspace();
+    if (typeof window === 'undefined') return;
+
+    try {
+      const current = window.localStorage.getItem(LOCAL_STORAGE_KEY);
+      const legacy = current ? null : window.localStorage.getItem(LEGACY_STORAGE_KEY);
+      const raw = current || legacy;
+      if (!raw) return;
+
+      const data = JSON.parse(raw);
+      // The old shared key may contain a cloud snapshot. Never migrate that into Local.
+      if (!data || data.v !== 1 || data.mode === 'IBKR_CLOUD') {
+        if (legacy) window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+        return;
+      }
+
+      setRawNames(Array.isArray(data.rawNames) ? data.rawNames : []);
+      setSeries(Array.isArray(data.series) ? data.series : []);
+      setCurrencyDaily(Array.isArray(data.currencyDaily) ? data.currencyDaily : []);
+      setTransactions(Array.isArray(data.transactions) ? data.transactions : []);
+      setNavByClass(typeof data.navByClass === 'object' && data.navByClass ? data.navByClass : {});
+      setPositions(Array.isArray(data.positions) ? data.positions : []);
+      setCashBalances(Array.isArray(data.cashBalances) ? data.cashBalances : []);
+      setNotes(Array.isArray(data.notes) ? data.notes : []);
+      setRawPreview(data.rawPreview ?? null);
+      setBaseCurrency(typeof data.baseCurrency === 'string' ? data.baseCurrency : 'HKD');
+      setSelectedCurrency(typeof data.selectedCurrency === 'string' ? data.selectedCurrency : 'ALL');
+      setMode(typeof data.mode === 'string' ? data.mode : 'UNKNOWN');
+      setActiveMonth(
+        typeof data.activeMonth === 'string'
+          ? data.activeMonth
+          : Array.isArray(data.series) && data.series.length
+            ? monthKey(data.series[data.series.length - 1].date)
+            : ''
+      );
+
+      if (legacy) {
+        window.localStorage.setItem(LOCAL_STORAGE_KEY, raw);
+        window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+      }
+    } catch {
+      // Ignore malformed or unavailable browser storage.
+    }
+  }, [resetWorkspace]);
 
   const setSourceMode = useCallback(
     (v: SourceMode) => {
+      if (v === sourceMode) {
+        if (v === 'cloud') checkCloudStatus();
+        return;
+      }
       setSourceModeState(v);
       setCloudError('');
       if (typeof window !== 'undefined') {
@@ -1026,10 +1072,16 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           // ignore storage errors
         }
       }
-      // Nothing is requested until the user actually asks for the cloud path.
-      if (v === 'cloud') checkCloudStatus();
+      setCloudAccounts([]);
+      setCloudConnections([]);
+      setCloudSyncedAt(null);
+      if (v === 'local') restoreLocalWorkspace();
+      else {
+        resetWorkspace();
+        checkCloudStatus();
+      }
     },
-    [checkCloudStatus]
+    [checkCloudStatus, resetWorkspace, restoreLocalWorkspace, sourceMode]
   );
 
   const syncCloud = useCallback(async () => {
@@ -1049,7 +1101,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       const accounts: CloudAccount[] = Array.isArray(data?.accounts) ? data.accounts : [];
       setCloudAccounts(accounts);
       setCloudConnections(Array.isArray(data?.connections) ? data.connections : []);
-      persistCloudSession({ mode: 'personal' });
 
       if (!data?.statement) throw new Error(data?.error || 'No brokerage account is connected yet.');
 
@@ -1067,97 +1118,35 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       setCloudBusy('');
       setIsParsing(false);
     }
-  }, [applyStatements, persistCloudSession, resetIngestState]);
+  }, [applyStatements, resetIngestState]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
       const storedMode = window.localStorage.getItem(SOURCE_MODE_KEY);
-      if (storedMode === 'cloud' || storedMode === 'local') setSourceModeState(storedMode);
+      const initialMode: SourceMode = storedMode === 'cloud' ? 'cloud' : 'local';
+      setSourceModeState(initialMode);
 
-      const storedSession = window.localStorage.getItem(CLOUD_SESSION_KEY);
-      if (storedSession) {
-        const parsed = JSON.parse(storedSession);
-        if (parsed?.mode === 'personal') {
-          setCloudSession({ mode: 'personal' });
+      // Remove browser credentials and cloud metadata left by the pre-Auth0 version.
+      window.localStorage.removeItem('pv_cloud_session_v1');
+      window.localStorage.removeItem('pv_cloud_cache_v1');
 
-          const cached = window.localStorage.getItem(CLOUD_CACHE_KEY);
-          if (cached) {
-            const c = JSON.parse(cached);
-            if (Array.isArray(c?.accounts)) setCloudAccounts(c.accounts);
-            if (Array.isArray(c?.connections)) setCloudConnections(c.connections);
-            if (typeof c?.syncedAt === 'number') setCloudSyncedAt(c.syncedAt);
-          }
-        }
-      }
+      if (initialMode === 'local') restoreLocalWorkspace();
+      else resetWorkspace();
     } catch {
       // ignore storage errors
+    } finally {
+      setIsHydrated(true);
     }
-  }, []);
+  }, [resetWorkspace, restoreLocalWorkspace]);
 
   // Covers the reload that comes back up already in cloud mode.
   useEffect(() => {
     if (sourceMode === 'cloud' && !cloudStatus) checkCloudStatus();
   }, [checkCloudStatus, cloudStatus, sourceMode]);
 
-  /**
-   * Which brokerages are attached is display state, not statement data, so it is
-   * cached beside the session: without it a reload reports "not connected" while the
-   * session behind it is still live.
-   */
   useEffect(() => {
-    if (!isHydrated || typeof window === 'undefined') return;
-    try {
-      if (!cloudSession) {
-        window.localStorage.removeItem(CLOUD_CACHE_KEY);
-        return;
-      }
-      window.localStorage.setItem(
-        CLOUD_CACHE_KEY,
-        JSON.stringify({ accounts: cloudAccounts, connections: cloudConnections, syncedAt: cloudSyncedAt })
-      );
-    } catch {
-      // ignore storage errors
-    }
-  }, [cloudAccounts, cloudConnections, cloudSession, cloudSyncedAt, isHydrated]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const data = JSON.parse(raw);
-      if (!data || data.v !== 1) return;
-
-      setRawNames(Array.isArray(data.rawNames) ? data.rawNames : []);
-      setSeries(Array.isArray(data.series) ? data.series : []);
-      setCurrencyDaily(Array.isArray(data.currencyDaily) ? data.currencyDaily : []);
-      setTransactions(Array.isArray(data.transactions) ? data.transactions : []);
-      setNavByClass(typeof data.navByClass === 'object' && data.navByClass ? data.navByClass : {});
-      setPositions(Array.isArray(data.positions) ? data.positions : []);
-      setCashBalances(Array.isArray(data.cashBalances) ? data.cashBalances : []);
-      setNotes(Array.isArray(data.notes) ? data.notes : []);
-      setRawPreview(data.rawPreview ?? null);
-      setBaseCurrency(typeof data.baseCurrency === 'string' ? data.baseCurrency : 'HKD');
-      setSelectedCurrency(typeof data.selectedCurrency === 'string' ? data.selectedCurrency : 'ALL');
-      setMode(typeof data.mode === 'string' ? data.mode : 'UNKNOWN');
-
-      const storedActive =
-        typeof data.activeMonth === 'string'
-          ? data.activeMonth
-          : Array.isArray(data.series) && data.series.length
-            ? monthKey(data.series[data.series.length - 1].date)
-            : '';
-      setActiveMonth(storedActive || '');
-    } catch {
-      // ignore storage errors
-    } finally {
-      setIsHydrated(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!isHydrated || typeof window === 'undefined') return;
+    if (!isHydrated || sourceMode !== 'local' || typeof window === 'undefined') return;
     const payload = {
       v: 1,
       rawNames,
@@ -1175,11 +1164,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       mode,
     };
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(payload));
     } catch {
       // ignore storage errors
     }
-  }, [activeMonth, baseCurrency, cashBalances, currencyDaily, isHydrated, mode, navByClass, notes, positions, rawNames, rawPreview, selectedCurrency, series, transactions]);
+  }, [activeMonth, baseCurrency, cashBalances, currencyDaily, isHydrated, mode, navByClass, notes, positions, rawNames, rawPreview, selectedCurrency, series, sourceMode, transactions]);
 
   const fetchChatModels = useCallback(async () => {
     try {
@@ -1641,7 +1630,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       rawPreview,
       sourceMode,
       cloudStatus,
-      cloudSession,
       cloudAccounts,
       cloudConnections,
       cloudBusy,
@@ -1747,7 +1735,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       cloudBusy,
       cloudConnections,
       cloudError,
-      cloudSession,
       cloudStatus,
       cloudSyncedAt,
       currencies,

@@ -117,9 +117,6 @@ export type CloudStatus = {
   user: { name: string | null; email: string | null } | null;
 };
 
-/** Marker that this browser has enabled the server's Personal SnapTrade integration. */
-export type CloudSession = { mode: 'personal' };
-
 export type CloudAccount = {
   id: string;
   name: string;

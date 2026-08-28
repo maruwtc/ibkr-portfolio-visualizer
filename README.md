@@ -123,6 +123,10 @@ subordinate SnapTrade user and never stores or sends a `userId` or `userSecret`.
 Brokerage connections remain managed in the SnapTrade dashboard. The application only
 syncs data from connections already attached to the saved Personal API key.
 
+Local and Cloud workspace state are isolated. Local statement data may be persisted in
+the browser, while Cloud portfolio data and cloud-derived chat are session-only and are
+cleared on logout or whenever the source changes.
+
 **Known limits of the cloud path**
 
 - SnapTrade reports no realized P/L per trade, so trades land in the ledger but are
