@@ -18,6 +18,7 @@ import type {
   TxnType,
 } from './types';
 import { buildMonthGrid, monthKey, safeNum, toISODate } from './utils';
+import { readNdjson } from '@/lib/ndjson';
 import { extractPdfLines } from './pdf';
 import { looksLikeFirstradeStatement, parseFirstradeStatement } from './firstrade';
 
@@ -47,6 +48,8 @@ type WorkspaceContextValue = {
   cloudConnections: CloudConnection[];
   cloudBusy: '' | 'sync';
   cloudError: string;
+  /** What a running sync is doing right now, for the panel to show while it streams. */
+  cloudProgress: string;
   cloudSyncedAt: number | null;
 
   series: DailyPoint[];
@@ -659,6 +662,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [cloudConnections, setCloudConnections] = useState<CloudConnection[]>([]);
   const [cloudBusy, setCloudBusy] = useState<'' | 'sync'>('');
   const [cloudError, setCloudError] = useState('');
+  const [cloudProgress, setCloudProgress] = useState('');
   const [cloudSyncedAt, setCloudSyncedAt] = useState<number | null>(null);
 
   const [series, setSeries] = useState<DailyPoint[]>([]);
@@ -1084,10 +1088,64 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     [checkCloudStatus, resetWorkspace, restoreLocalWorkspace, sourceMode]
   );
 
+  /**
+   * Reads the sync as a stream instead of one response.
+   *
+   * The server sends complete statement snapshots as they become available —
+   * holdings first, then activity as its pages land — so the workspace is drawn and
+   * usable while the rest of the history is still downloading. Each snapshot stands on
+   * its own, so applying the newest is enough; there are no deltas to merge.
+   */
   const syncCloud = useCallback(async () => {
     setCloudBusy('sync');
     setCloudError('');
+    setCloudProgress('Connecting…');
     setIsParsing(true);
+
+    let applied = false;
+    let streamError = '';
+
+    const handle = (event: any) => {
+      if (event?.kind === 'meta') {
+        const accounts: CloudAccount[] = Array.isArray(event.accounts) ? event.accounts : [];
+        setCloudAccounts(accounts);
+        setCloudConnections(Array.isArray(event.connections) ? event.connections : []);
+        setRawNames(accounts.map((a) => [a.institution, a.name].filter(Boolean).join(' · ') || a.id));
+        setCloudProgress(accounts.length ? 'Loading holdings…' : '');
+        return;
+      }
+
+      if (event?.kind === 'stage') {
+        setCloudProgress(
+          event.stage === 'holdings'
+            ? 'Loading activity…'
+            : `Loaded ${Number(event.count || 0).toLocaleString()} activity rows…`
+        );
+        return;
+      }
+
+      if (event?.kind === 'statement') {
+        if (!applied) resetIngestState();
+        applied = true;
+        applyStatements(
+          [{ label: 'SnapTrade', statement: event.statement as ParsedStatement }],
+          'IBKR_CLOUD',
+          'The connected account returned no positions or activity.'
+        );
+        // Holdings are enough to work with; the rest arrives behind an open page.
+        setIsParsing(false);
+        return;
+      }
+
+      if (event?.kind === 'error') {
+        streamError = String(event.message || 'Cloud sync failed');
+        return;
+      }
+
+      if (event?.kind === 'done') {
+        setCloudSyncedAt(typeof event.syncedAt === 'number' ? event.syncedAt : Date.now());
+      }
+    };
 
     try {
       const res = await fetch('/api/cloud/snaptrade/sync', {
@@ -1095,27 +1153,23 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error || `Sync failed (${res.status})`);
 
-      const accounts: CloudAccount[] = Array.isArray(data?.accounts) ? data.accounts : [];
-      setCloudAccounts(accounts);
-      setCloudConnections(Array.isArray(data?.connections) ? data.connections : []);
+      // Anything that fails before the stream opens still answers as plain JSON.
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || `Sync failed (${res.status})`);
+      }
 
-      if (!data?.statement) throw new Error(data?.error || 'No brokerage account is connected yet.');
+      await readNdjson(res.body, handle);
 
-      resetIngestState();
-      setRawNames(accounts.map((a) => [a.institution, a.name].filter(Boolean).join(' · ') || a.id));
-      applyStatements(
-        [{ label: 'SnapTrade', statement: data.statement as ParsedStatement }],
-        'IBKR_CLOUD',
-        'The connected account returned no positions or activity.'
-      );
-      setCloudSyncedAt(typeof data?.syncedAt === 'number' ? data.syncedAt : Date.now());
+      // A failure after holdings landed is a partial sync, not a failed one.
+      if (streamError && !applied) throw new Error(streamError);
+      if (streamError) setCloudError(streamError);
     } catch (e: any) {
       setCloudError(e?.message || 'Cloud sync failed');
     } finally {
       setCloudBusy('');
+      setCloudProgress('');
       setIsParsing(false);
     }
   }, [applyStatements, resetIngestState]);
@@ -1634,6 +1688,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       cloudConnections,
       cloudBusy,
       cloudError,
+      cloudProgress,
       cloudSyncedAt,
       setSourceMode,
       checkCloudStatus,
@@ -1735,6 +1790,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       cloudBusy,
       cloudConnections,
       cloudError,
+      cloudProgress,
       cloudStatus,
       cloudSyncedAt,
       currencies,

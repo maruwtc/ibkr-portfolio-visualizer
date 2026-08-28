@@ -129,38 +129,71 @@ export function accountBalances(cfg: SnapTradeConfig, accountId: string) {
   return request<any[]>(cfg, 'GET', `/accounts/${encodeURIComponent(accountId)}/balances`);
 }
 
-export function accountPositions(cfg: SnapTradeConfig, accountId: string) {
-  return request<any[]>(cfg, 'GET', `/accounts/${encodeURIComponent(accountId)}/positions`);
+/**
+ * `/positions` and `/holdings` both answer 410 Gone for client ids issued after
+ * SnapTrade's 2026 cutovers; `/positions/all` is the surviving granular endpoint.
+ * It returns `{ results, data_freshness }` rather than a bare array.
+ */
+export async function accountPositions(cfg: SnapTradeConfig, accountId: string): Promise<any[]> {
+  const data = await request<any>(cfg, 'GET', `/accounts/${encodeURIComponent(accountId)}/positions/all`);
+
+  if (Array.isArray(data)) return data;
+  return Array.isArray(data?.results) ? data.results : [];
 }
 
+/** SnapTrade's per-request maximum. */
+const ACTIVITIES_PAGE_SIZE = 1000;
+
+/** Keeps a malformed `total` from paging forever. */
+const ACTIVITIES_MAX = 50_000;
+
 /**
- * Activities moved from a per-account route to a top-level one that takes an account
- * filter. Both are still served, so the newer form is tried first and the older one
- * covers accounts SnapTrade has not migrated.
+ * Account activity, one page at a time.
+ *
+ * The user-level `/activities` route is the one SnapTrade retired (410 Gone for client
+ * ids registered after April 2026). Its per-account replacement answers with
+ * `{ data, pagination: { offset, limit, total } }`, newest trade date first.
+ *
+ * Yielding per page rather than returning the whole history lets a caller stream
+ * results out while the rest is still being fetched. Omitting the date range asks
+ * SnapTrade for everything it holds, from first known transaction to last.
  */
+export async function* accountActivityPages(
+  cfg: SnapTradeConfig,
+  accountId: string,
+  range: { startDate?: string; endDate?: string } = {}
+): AsyncGenerator<any[], void, unknown> {
+  let offset = 0;
+  let fetched = 0;
+
+  for (;;) {
+    const data = await request<any>(cfg, 'GET', `/accounts/${encodeURIComponent(accountId)}/activities`, {
+      query: {
+        startDate: range.startDate,
+        endDate: range.endDate,
+        offset,
+        limit: ACTIVITIES_PAGE_SIZE,
+      },
+    });
+
+    const batch = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+    if (batch.length) yield batch;
+
+    const total = Number(data?.pagination?.total);
+    offset += batch.length;
+    fetched += batch.length;
+
+    if (!batch.length || !Number.isFinite(total) || offset >= total || fetched >= ACTIVITIES_MAX) break;
+  }
+}
+
+/** Every page collected, for callers that have nothing useful to do with a partial set. */
 export async function accountActivities(
   cfg: SnapTradeConfig,
   accountId: string,
   range: { startDate?: string; endDate?: string } = {}
 ): Promise<any[]> {
-  const query = {
-    accounts: accountId,
-    startDate: range.startDate,
-    endDate: range.endDate,
-  };
-
-  try {
-    const data = await request<any>(cfg, 'GET', '/activities', { query });
-    if (Array.isArray(data)) return data;
-    if (Array.isArray(data?.data)) return data.data;
-    return [];
-  } catch (e) {
-    if (!(e instanceof SnapTradeError) || (e.status !== 404 && e.status !== 400)) throw e;
-  }
-
-  const legacy = await request<any>(cfg, 'GET', `/accounts/${encodeURIComponent(accountId)}/activities`, {
-    query: { startDate: range.startDate, endDate: range.endDate },
-  });
-
-  return Array.isArray(legacy) ? legacy : Array.isArray(legacy?.data) ? legacy.data : [];
+  const out: any[] = [];
+  for await (const page of accountActivityPages(cfg, accountId, range)) out.push(...page);
+  return out;
 }

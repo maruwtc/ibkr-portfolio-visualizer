@@ -29,6 +29,7 @@ export default function CloudPanel({ compact = false }: { compact?: boolean }) {
     cloudConnections,
     cloudBusy,
     cloudError,
+    cloudProgress,
     cloudSyncedAt,
     checkCloudStatus,
     syncCloud,
@@ -216,7 +217,9 @@ export default function CloudPanel({ compact = false }: { compact?: boolean }) {
       </Button>
 
       <div className="text-xs text-muted-foreground">
-        <span>Last sync: {fmtWhen(cloudSyncedAt)}</span>
+        {/* While the sync streams, what it is fetching is more use than when it last
+            finished — the workspace is already drawn from the holdings by then. */}
+        <span>{cloudProgress || `Last sync: ${fmtWhen(cloudSyncedAt)}`}</span>
       </div>
     </div>
   );

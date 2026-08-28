@@ -55,6 +55,45 @@ function symbolOf(raw: Json | undefined): { ticker: string; description?: string
   };
 }
 
+/**
+ * `/positions/all` describes the security under `instrument`, discriminated by `kind`,
+ * where the retired `/positions` route nested a universal symbol two levels deep.
+ * Both shapes are read so a mixed or older response still maps.
+ */
+function instrumentOf(position: Json | undefined): { ticker: string; description?: string; currency: string; kind: string } {
+  const inst = position?.instrument as Json | undefined;
+
+  if (inst && (inst.symbol || inst.raw_symbol)) {
+    return {
+      ticker: String(inst.symbol || inst.raw_symbol || '').toUpperCase(),
+      description: inst.description || undefined,
+      currency: currencyOf(inst.currency),
+      kind: String(inst.kind ?? '').toLowerCase(),
+    };
+  }
+
+  const legacy = symbolOf(position?.symbol);
+  return { ...legacy, kind: '' };
+}
+
+/** Instrument kinds the app should treat as ordinary equity holdings. */
+const EQUITY_KINDS = new Set(['stock', 'etf', 'adr', 'cef', 'mutualfund']);
+
+/**
+ * Maps SnapTrade's `kind` onto the asset-class labels the IBKR statement parser
+ * produces. Everything equity-like has to come out as "Stocks": the holdings
+ * allocation upstream keeps only positions matching /stocks?/i, so an ETF filed under
+ * its own label would silently vanish from the chart.
+ */
+function assetClassOf(kind: string): string {
+  if (!kind || EQUITY_KINDS.has(kind)) return 'Stocks';
+  if (kind === 'option') return 'Options';
+  if (kind === 'crypto') return 'Crypto';
+  if (kind === 'future') return 'Futures';
+  if (kind === 'cfd') return 'CFDs';
+  return 'Other';
+}
+
 function normalizeType(v: unknown): string {
   return String(v ?? '').toUpperCase().replace(/[^A-Z]/g, '');
 }
@@ -104,6 +143,7 @@ export function mapAccounts(bundles: SnapTradeAccountBundle[]): ParsedStatement 
   const accountCurrencies = new Set<string>();
   let skippedActivities = 0;
   let tradeCount = 0;
+  let cashEquivalentHoldings = 0;
 
   for (const bundle of bundles) {
     const accountCurrency =
@@ -162,20 +202,29 @@ export function mapAccounts(bundles: SnapTradeAccountBundle[]): ParsedStatement 
     }
 
     for (const position of bundle.positions || []) {
-      const sym = symbolOf(position?.symbol);
-      if (!sym.ticker) continue;
+      const inst = instrumentOf(position);
+      if (!inst.ticker) continue;
 
+      // Money-market funds the broker already counts inside the cash balance. Listing
+      // them as holdings would double them against NAV.
+      if (position?.cash_equivalent === true) {
+        cashEquivalentHoldings++;
+        continue;
+      }
+
+      // `/positions/all` quotes the numbers as decimal strings.
       const quantity = num(position?.units ?? position?.fractional_units);
       const price = num(position?.price);
-      const currency = sym.currency || accountCurrency;
+      const currency = currencyOf(position?.currency) || inst.currency || accountCurrency;
       const marketValue = quantity * price;
-      const average = optNum(position?.average_purchase_price);
+      // The granular endpoint reports cost basis instead of an open P/L figure.
+      const average = optNum(position?.cost_basis) ?? optNum(position?.average_purchase_price);
       const pnlTotal =
         optNum(position?.open_pnl) ?? (average !== undefined ? (price - average) * quantity : 0);
 
       positions.push({
-        assetClass: position?.symbol?.symbol?.type?.description || 'Stocks',
-        symbol: sym.ticker,
+        assetClass: assetClassOf(inst.kind),
+        symbol: inst.ticker,
         currency,
         quantity,
         price,
@@ -296,10 +345,15 @@ export function mapAccounts(bundles: SnapTradeAccountBundle[]): ParsedStatement 
   notes.push(
     `Synced ${bundles.length} account${bundles.length === 1 ? '' : 's'}: ${positions.length} holdings, ${transactions.length} activity rows.`
   );
+  if (cashEquivalentHoldings) {
+    notes.push(
+      `${cashEquivalentHoldings} cash-equivalent holding${cashEquivalentHoldings === 1 ? '' : 's'} counted in the cash balance rather than listed separately.`
+    );
+  }
   notes.push(
     'SnapTrade does not report realized P/L per trade: trades appear in the ledger but are excluded from calendar P&L (dividends, interest, withholding and fees are included).'
   );
-  if (tradeCount) notes.push(`${tradeCount} trade${tradeCount === 1 ? '' : 's'} carry no realized P/L from the broker feed.`);
+  if (tradeCount) notes.push(`${tradeCount} trade${tradeCount === 1 ? ' carries' : 's carry'} no realized P/L from the broker feed.`);
   if (skippedActivities) {
     notes.push(`${skippedActivities} non-P&L row${skippedActivities === 1 ? '' : 's'} (transfers, contributions, withdrawals) skipped.`);
   }
