@@ -7,7 +7,7 @@ It converts those statements into a **realized P&L calendar**, **transaction led
 - Realized only
 - No unrealized mark-to-market
 - No broker lock-in
-- Fully offline / browser-only parsing
+- Offline by default; optional broker sync is opt-in
 
 ---
 
@@ -33,8 +33,13 @@ Calendar P&L = **Realized trades + fees + dividends + interest + withholding tax
 - Avoids false profit from FX mixing
 
 ### Responsive Layout
-- Desktop: resizable 3-panel layout (controls / calendar or ledger / inspector)
+- Desktop: fixed side-panel layout (controls / calendar or ledger / inspector)
 - Mobile: stacked layout with collapsible inspector and touch-friendly calendar
+
+### Local and Cloud Data Sources
+- **Local (default)**: statements are parsed in the browser and nothing leaves the device
+- **Cloud (opt-in)**: read-only IBKR sync through SnapTrade, no Trader Workstation or IB Gateway
+- The switch is explicit and remembered; local stays the default for anyone who never touches it
 
 ### Multi-File Support
 - Upload multiple IBKR CSV and Firstrade PDF files at once (drag & drop or file picker)
@@ -51,7 +56,7 @@ Calendar P&L = **Realized trades + fees + dividends + interest + withholding tax
 - Clean trading journal visualization
 - Broker-independent review
 - Audit-friendly transaction inspection
-- Offline-safe (no API keys, no backend)
+- Offline-safe in Local mode (no API keys, no backend); cloud sync is opt-in and off by default
 
 ### It does NOT do
 - Unrealized MTM valuation
@@ -61,6 +66,73 @@ Calendar P&L = **Realized trades + fees + dividends + interest + withholding tax
 - Trade execution
 
 If you want true total return, export `NetLiquidation / Daily NAV` from IBKR separately.
+
+---
+
+## Data Sources: Local vs Cloud
+
+Both paths produce the same `ParsedStatement`, so the calendar, ledger and portfolio
+views are identical whichever one filled them.
+
+### Local (default)
+
+Upload IBKR CSVs or Firstrade PDFs. Parsing runs in the browser, there is no server
+call, and nothing is transmitted. This is the only mode that works on a static
+deployment (GitHub Pages), and the only one that needs no configuration.
+
+### Cloud (opt-in, requires a server)
+
+Connects Interactive Brokers through a SnapTrade Personal API key, which is a
+read-only brokerage aggregator — **no Trader Workstation, no IB Gateway, no local Java
+process**. Brokerage connections are managed in the SnapTrade dashboard; this app never
+sees a brokerage credential.
+
+Cloud users sign in with Auth0, then enter their own SnapTrade Personal API credentials
+in the Cloud panel. Credentials are scoped to the Auth0 user ID and encrypted with
+AES-256-GCM before storage in Postgres; the consumer key is never returned to the
+browser.
+
+Set these deployment variables to enable it:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `AUTH0_DOMAIN` | yes | Auth0 tenant domain |
+| `AUTH0_CLIENT_ID` | yes | Auth0 Regular Web Application client ID |
+| `AUTH0_CLIENT_SECRET` | yes | Auth0 application secret |
+| `AUTH0_SECRET` | yes | Auth0 cookie secret; generate with `openssl rand -hex 32` |
+| `APP_BASE_URL` | yes in production | Public application origin, such as `https://example.com` |
+| `DATABASE_URL` | yes | Postgres connection string injected by a Vercel Marketplace storage integration |
+| `CREDENTIAL_ENCRYPTION_KEY` | yes | Base64 32-byte key; generate with `openssl rand -base64 32` |
+| `SNAPTRADE_BASE_URL` | no | Defaults to `https://api.snaptrade.com/api/v1` |
+
+Create an Auth0 **Regular Web Application**. Configure
+`https://YOUR_DOMAIN/auth/callback` as an allowed callback URL and your application
+origin as an allowed logout URL. For local development, use
+`http://localhost:3000/auth/callback` and `http://localhost:3000`.
+
+On Vercel, install a Postgres provider such as Neon from Marketplace and connect it to
+the project so it injects `DATABASE_URL`. The credentials table is created on first use;
+the equivalent migration is in `db/migrations/001_snaptrade_credentials.sql`.
+
+Without Auth0 or database configuration, `/api/cloud/status` reports the missing
+service and Local mode remains usable. Static exports cannot use Cloud mode because API
+routes, authentication, and database access require a server.
+
+The Personal key identifies its SnapTrade owner directly. The app never registers a
+subordinate SnapTrade user and never stores or sends a `userId` or `userSecret`.
+Brokerage connections remain managed in the SnapTrade dashboard. The application only
+syncs data from connections already attached to the saved Personal API key.
+
+**Known limits of the cloud path**
+
+- SnapTrade reports no realized P/L per trade, so trades land in the ledger but are
+  excluded from calendar P&L — the same treatment Firstrade PDFs get. Dividends,
+  interest, withholding and fees are included.
+- No FX rates are supplied. Holdings and cash outside the base currency are shown in
+  their own currency and left out of base-currency NAV, with a parser note saying so.
+- Activity defaults to the last 730 days.
+- Firstrade over the cloud path is **not implemented yet**; use Local mode with a
+  statement PDF.
 
 ---
 
@@ -101,7 +173,7 @@ Scanned (image-only) PDFs have no text layer and are skipped with a parser note.
 ## Tech Stack
 
 - Next.js (App Router)
-- React (client-side only)
+- React
 - TypeScript
 - Shadcn/UI
 - Tailwind CSS
@@ -109,7 +181,10 @@ Scanned (image-only) PDFs have no text layer and are skipped with a parser note.
 - pdf.js / pdfjs-dist (PDF text extraction, in-browser)
 - GSAP (light UI animation)
 
-No backend, database, or network calls. Everything runs locally in the browser.
+In Local mode there is no backend, database, or network call — everything runs in the
+browser. The API routes exist only for the opt-in extras: cloud sync and the local LLM
+chat proxy. Neither is reachable on a static export, and both degrade to a clear
+"unavailable" message rather than an error.
 
 ---
 
@@ -118,17 +193,28 @@ No backend, database, or network calls. Everything runs locally in the browser.
 ```
 app/
   page.tsx          # Main dashboard
+  api/cloud/        # Authenticated SnapTrade configuration and sync
 components/
   ui/               # shadcn components
   workspace/
-    WorkspaceContext.tsx  # upload dispatch, IBKR CSV parser, aggregation
+    WorkspaceContext.tsx  # source mode, ingestion, IBKR CSV parser, aggregation
     firstrade.ts          # Firstrade PDF statement parser
     pdf.ts                # in-browser PDF text extraction (pdf.js)
+    SourceSwitch.tsx      # Local / Cloud switch
+    CloudPanel.tsx        # Auth0 sign-in, credential setup and sync
+db/
+  migrations/            # Postgres schema for encrypted credentials
 lib/
   utils             # helper logic
+  auth0.ts          # Auth0 server client
+  cloud/            # encrypted per-user credential persistence
+  snaptrade/
+    client.ts       # signed SnapTrade REST calls (server only)
+    map.ts          # SnapTrade payloads -> ParsedStatement
 ```
 
-All parsing, aggregation, and calculations happen in memory.
+All parsing, aggregation, and calculations happen in memory. Cloud responses are
+normalized on the server and enter the app through the same ingestion path as a file.
 
 ---
 

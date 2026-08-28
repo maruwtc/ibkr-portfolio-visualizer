@@ -40,7 +40,7 @@ export default function NavTabs({
               value={key}
               className={cn(
                 'flex h-auto flex-1 flex-col gap-1 rounded-lg px-1 py-1.5 text-[11px] font-medium',
-                activeTab === key ? 'text-foreground' : 'text-muted-foreground'
+                activeTab === key ? 'text-foreground dark:text-foreground' : 'text-muted-foreground'
               )}
               onClick={() => router.push(href)}
             >
@@ -54,8 +54,8 @@ export default function NavTabs({
   }
 
   return (
-    <Tabs value={activeTab} className="w-full">
-      <TabsList className="flex w-full items-center justify-between rounded-full border border-muted-foreground/20 border-b-0 bg-transparent p-0 backdrop-blur-xs">
+    <Tabs value={activeTab} className="w-auto shrink-0">
+      <TabsList className="h-9 w-auto gap-1 rounded-lg bg-muted p-1">
         {TABS.map(({ key, href, Icon }) => (
           <Tooltip key={key}>
             <TooltipTrigger asChild>
@@ -65,8 +65,12 @@ export default function NavTabs({
                 // TooltipTrigger overwrites the data-state that drives the shadcn active
                 // styling, so the selected tab is highlighted from the route instead.
                 className={cn(
-                  'px-2 py-2',
-                  activeTab === key && 'bg-muted text-foreground shadow-sm'
+                  'size-7 flex-none rounded-md p-0 text-muted-foreground hover:bg-background/60 hover:text-foreground',
+                  // `dark:text-foreground` is not redundant: shadcn's TabsTrigger carries
+                  // `dark:text-muted-foreground`, which tailwind-merge keeps (different
+                  // variant key) and the cascade then lets beat a plain `text-foreground`
+                  // — leaving the selected tab muted in dark mode.
+                  activeTab === key && 'bg-background text-foreground shadow-sm dark:text-foreground'
                 )}
                 onClick={() => router.push(href)}
               >

@@ -3,9 +3,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import gsap from 'gsap';
-import { FileUp, Info, SlidersHorizontal, Upload } from 'lucide-react';
+import { FileUp, Info, RefreshCw, SlidersHorizontal, Upload } from 'lucide-react';
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
@@ -15,15 +14,18 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 
 import StatCard from '@/components/workspace/StatCard';
 import NavTabs from '@/components/workspace/NavTabs';
-import useColumnResizer from '@/components/workspace/useColumnResizer';
-import Splitter from '@/components/workspace/Splitter';
+import FieldRow from '@/components/workspace/FieldRow';
 import RightPanel from '@/components/workspace/RightPanel';
 import BottomSheet from '@/components/workspace/BottomSheet';
 import TransactionFilters from '@/components/workspace/TransactionFilters';
+import CalendarControls, { CurrencyViewControl } from '@/components/workspace/CalendarControls';
+import ChatControls from '@/components/workspace/ChatControls';
+import SourceSwitch from '@/components/workspace/SourceSwitch';
+import CloudPanel from '@/components/workspace/CloudPanel';
 import ThemeToggle from '@/components/theme/ThemeToggle';
 import { WorkspaceProvider, useWorkspace } from '@/components/workspace/WorkspaceContext';
 import type { ActiveTab } from '@/components/workspace/types';
-import { fmtMode, fmtMoney, fmtTxnType } from '@/components/workspace/utils';
+import { fmtMode, fmtMoney, fmtSignedMoney, fmtTxnType, toneOf } from '@/components/workspace/utils';
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(false);
@@ -58,24 +60,18 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
     series,
     transactions,
     baseCurrency,
-    selectedCurrency,
-    currencies,
     currencyLabel,
+    realizedUnit,
     totalCalendarPnl,
-    portfolioPeriod,
+    currentNavTotal,
     pickFiles,
     clearAll,
     parseFiles,
-    setSelectedCurrency,
+    sourceMode,
+    syncCloud,
+    cloudBusy,
     txnType,
-    setTxnType,
     txnCurrency,
-    setTxnCurrency,
-    txnCurrenciesAvailable,
-    chatProviders,
-    refreshChatModels,
-    clearChat,
-    chatLoading,
     selectedTxn,
     setSelectedTxn,
     activeMonth,
@@ -123,20 +119,11 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
       el.removeEventListener('drop', onDrop);
     };
     // isMobile swaps which element holds dropRef, so the listeners have to re-bind.
-  }, [parseFiles, isMobile, hasData]);
-
-  const { containerRef: pageColsRef, sizes: pageColSizes, startDrag: startPageDrag } = useColumnResizer({
-    left: 340,
-    mid: 760,
-    right: 420,
-  });
+    // Cloud mode unmounts it entirely.
+  }, [parseFiles, isMobile, hasData, sourceMode]);
 
   const showSummaryPanel = activeTab !== 'portfolio' && activeTab !== 'chat';
-  const gridTotal = pageColSizes.left + pageColSizes.mid + pageColSizes.right + 16;
-  const midFill = `minmax(0, calc(${pageColSizes.mid}px + (100% - ${gridTotal}px)))`;
 
-  const currencyButtons = currencies.slice(0, isMobile ? 4 : 8);
-  const txnCurrencyButtons = txnCurrenciesAvailable.slice(0, isMobile ? 4 : 8);
 
   const rightPanel = (
     <RightPanel
@@ -145,10 +132,9 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
       rawNames={rawNames}
       mode={mode}
       selectedTxn={selectedTxn}
-      currencyLabel={currencyLabel}
+      realizedUnit={realizedUnit}
       totalCalendarPnl={totalCalendarPnl}
       transactionsLength={transactions.length}
-      baseCurrency={baseCurrency}
       activeMonth={activeMonth}
       monthStats={monthStats}
     />
@@ -156,32 +142,16 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
 
   const mobileSubtitle = hasData
     ? [fmtMode(mode).replace(' Mode', ''), transactions.length ? `${transactions.length} txns` : null, baseCurrency]
-        .filter(Boolean)
-        .join(' · ')
+      .filter(Boolean)
+      .join(' · ')
     : 'No statement loaded';
 
-  // Phones surface only the filters that belong to the visible tab, inside a sheet.
+  // Phones have no left column, so the same controls arrive through a sheet instead.
   const mobileFilters =
     activeTab === 'transactions' ? (
       <TransactionFilters stacked />
     ) : activeTab === 'calendar' ? (
-      <div className="space-y-3">
-        <div className="text-sm font-medium">Currency view</div>
-        <div className="grid grid-cols-3 gap-2">
-          <Button size="sm" variant={selectedCurrency === 'ALL' ? 'default' : 'outline'} onClick={() => setSelectedCurrency('ALL')}>
-            ALL
-          </Button>
-          <Button size="sm" variant={selectedCurrency === 'BASE' ? 'default' : 'outline'} onClick={() => setSelectedCurrency('BASE')}>
-            Base · {baseCurrency}
-          </Button>
-          {currencies.map((ccy) => (
-            <Button key={ccy} size="sm" variant={selectedCurrency === ccy ? 'default' : 'outline'} onClick={() => setSelectedCurrency(ccy)}>
-              {ccy}
-            </Button>
-          ))}
-        </div>
-        <div className="text-xs text-muted-foreground">ALL adds currencies together without FX conversion.</div>
-      </div>
+      <CurrencyViewControl columns={3} />
     ) : null;
 
   const mobileFilterSummary =
@@ -189,88 +159,17 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
       ? `${txnType === 'ALL' ? 'All types' : fmtTxnType(txnType)} · ${txnCurrency === 'ALL' ? 'All currencies' : txnCurrency}`
       : currencyLabel;
 
+  /**
+   * The left column is the workspace's tool rail: whatever configures the active tab
+   * lives here, and the middle column is left to the data. Each control set is mounted
+   * once — the panels render their own copy only below lg, where there is no rail.
+   */
   const viewControls = (() => {
-    if (activeTab === 'calendar') {
-      return (
-        <div className="space-y-2">
-          <div className="text-sm font-medium">Calendar View</div>
-          <div className="flex gap-2 flex-wrap items-center">
-            <Button size="sm" variant={selectedCurrency === 'ALL' ? 'default' : 'outline'} onClick={() => setSelectedCurrency('ALL')}>
-              ALL
-            </Button>
-            <Button size="sm" variant={selectedCurrency === 'BASE' ? 'default' : 'outline'} onClick={() => setSelectedCurrency('BASE')}>
-              Base ({baseCurrency})
-            </Button>
-            {currencyButtons.map((ccy) => (
-              <Button key={ccy} size="sm" variant={selectedCurrency === ccy ? 'default' : 'outline'} onClick={() => setSelectedCurrency(ccy)}>
-                {ccy}
-              </Button>
-            ))}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            Tip: use Transactions tab for detailed ledger. Inspector opens when you tap a row.
-          </div>
-        </div>
-      );
-    }
-
-    if (activeTab === 'transactions') {
-      return (
-        <div className="space-y-2">
-          <div className="text-sm font-medium">Transactions View</div>
-          <div className="flex gap-2 flex-wrap items-center">
-            {(['ALL', 'TRADE', 'DIVIDEND', 'INTEREST', 'WHT', 'FEE'] as const).map((t) => (
-              <Button key={t} size="sm" variant={txnType === t ? 'default' : 'outline'} onClick={() => setTxnType(t as any)}>
-                {t === 'ALL' ? 'All' : t}
-              </Button>
-            ))}
-          </div>
-          <div className="flex gap-2 flex-wrap items-center">
-            <Button size="sm" variant={txnCurrency === 'ALL' ? 'default' : 'outline'} onClick={() => setTxnCurrency('ALL')}>
-              All
-            </Button>
-            {txnCurrencyButtons.map((ccy) => (
-              <Button key={ccy} size="sm" variant={txnCurrency === ccy ? 'default' : 'outline'} onClick={() => setTxnCurrency(ccy)}>
-                {ccy}
-              </Button>
-            ))}
-          </div>
-          <div className="text-xs text-muted-foreground">Tip: use Search + Sort in the Transactions tab.</div>
-        </div>
-      );
-    }
-
-    if (activeTab === 'portfolio') {
-      return (
-        <div className="space-y-2">
-          <div className="text-sm font-medium">Portfolio View</div>
-          <div className="text-xs text-muted-foreground">Performance window</div>
-          <div className="rounded-md border px-2 py-1 text-xs">{portfolioPeriod}</div>
-          <div className="text-xs text-muted-foreground">Base currency: {baseCurrency}</div>
-        </div>
-      );
-    }
-
-    if (activeTab === 'chat') {
-      return (
-        <div className="space-y-2">
-          <div className="text-sm font-medium">Chat View</div>
-          <div className="text-xs text-muted-foreground">
-            {chatProviders.lmstudio ? 'LM Studio ready' : 'LM Studio not detected'} ·{' '}
-            {chatProviders.ollama ? 'Ollama ready' : 'Ollama not detected'}
-          </div>
-          <div className="flex gap-2 flex-wrap items-center">
-            <Button size="sm" variant="outline" onClick={refreshChatModels} disabled={chatLoading}>
-              Refresh Models
-            </Button>
-            <Button size="sm" variant="outline" onClick={clearChat} disabled={chatLoading}>
-              Clear Chat
-            </Button>
-          </div>
-        </div>
-      );
-    }
-
+    if (!hasData && activeTab !== 'chat') return null;
+    if (activeTab === 'calendar') return <CalendarControls />;
+    if (activeTab === 'transactions') return <TransactionFilters stacked />;
+    if (activeTab === 'chat') return <ChatControls />;
+    // Portfolio is a read-only overview; it has nothing to configure.
     return null;
   })();
 
@@ -285,9 +184,15 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                   <div className="truncate text-base font-semibold leading-tight">Portfolio Visualizer</div>
                   <div className="truncate text-[11px] text-muted-foreground">{mobileSubtitle}</div>
                 </div>
-                <Button size="icon" variant="ghost" onClick={pickFiles} aria-label="Add statement">
-                  <Upload className="size-5" />
-                </Button>
+                {sourceMode === 'cloud' ? (
+                  <Button size="icon" variant="ghost" onClick={syncCloud} aria-label="Sync accounts" disabled={cloudBusy !== ''}>
+                    <RefreshCw className={cloudBusy === 'sync' ? 'size-5 animate-spin' : 'size-5'} />
+                  </Button>
+                ) : (
+                  <Button size="icon" variant="ghost" onClick={pickFiles} aria-label="Add statement">
+                    <Upload className="size-5" />
+                  </Button>
+                )}
                 <ThemeToggle />
                 <Button size="icon" variant="ghost" onClick={() => setDetailsOpen(true)} aria-label="Statement details">
                   <Info className="size-5" />
@@ -324,26 +229,47 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                 )}
 
                 {!hasData && !isParsing ? (
-                  <div ref={dropRef} className="pt-10">
-                    <button
-                      type="button"
-                      onClick={pickFiles}
-                      className="flex w-full flex-col items-center rounded-2xl border border-dashed px-6 py-12 text-center active:bg-muted/50"
-                    >
-                      <FileUp className="size-8 text-muted-foreground" />
-                      <span className="mt-4 text-base font-semibold">Add a statement</span>
-                      <span className="mt-1 text-sm text-muted-foreground">
-                        IBKR Activity Statement (CSV) or Firstrade statement (PDF).
-                      </span>
-                    </button>
+                  <div ref={dropRef} className="space-y-4 pt-6">
+                    <SourceSwitch fullWidth />
+                    {sourceMode === 'cloud' ? (
+                      <div className="rounded-2xl border p-4">
+                        <CloudPanel />
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={pickFiles}
+                        className="flex w-full flex-col items-center rounded-2xl border border-dashed px-6 py-12 text-center active:bg-muted/50"
+                      >
+                        <FileUp className="size-8 text-muted-foreground" />
+                        <span className="mt-4 text-base font-semibold">Add a statement</span>
+                        <span className="mt-1 text-sm text-muted-foreground">
+                          IBKR Activity Statement (CSV) or Firstrade statement (PDF).
+                        </span>
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <>
-                    {hasData && (
+                    {/* Portfolio leads with these same figures, so the strip would only repeat it. */}
+                    {hasData && activeTab !== 'portfolio' && (
                       <div className="-mx-3 flex snap-x gap-2 overflow-x-auto px-3 pb-1 [&::-webkit-scrollbar]:hidden [&>*]:min-w-[45%] [&>*]:shrink-0 [&>*]:snap-start">
-                        <StatCard title="Calendar P&L" value={fmtMoney(totalCalendarPnl)} />
-                        <StatCard title="Transactions" value={transactions.length.toLocaleString()} />
-                        <StatCard title="Base Currency" value={baseCurrency} />
+                        <StatCard
+                          title="Net Liquidation"
+                          value={currentNavTotal ? fmtMoney(currentNavTotal) : '—'}
+                          unit={currentNavTotal ? baseCurrency : undefined}
+                        />
+                        <StatCard
+                          title="Realized P&L"
+                          value={fmtSignedMoney(totalCalendarPnl)}
+                          unit={realizedUnit}
+                          tone={toneOf(totalCalendarPnl)}
+                        />
+                        <StatCard
+                          title="Activity"
+                          value={transactions.length.toLocaleString()}
+                          hint={`over ${series.length.toLocaleString()} days`}
+                        />
                       </div>
                     )}
 
@@ -411,27 +337,46 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
 
                 <Separator />
 
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setDetailsOpen(false);
-                      pickFiles();
-                    }}
-                  >
-                    Add statement
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setDetailsOpen(false);
-                      clearAll();
-                    }}
-                    disabled={!hasData}
-                  >
-                    Clear data
-                  </Button>
-                </div>
+                <SourceSwitch fullWidth />
+
+                {sourceMode === 'cloud' ? (
+                  <>
+                    <CloudPanel compact />
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => {
+                        setDetailsOpen(false);
+                        clearAll();
+                      }}
+                      disabled={!hasData}
+                    >
+                      Clear data
+                    </Button>
+                  </>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setDetailsOpen(false);
+                        pickFiles();
+                      }}
+                    >
+                      Add statement
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setDetailsOpen(false);
+                        clearAll();
+                      }}
+                      disabled={!hasData}
+                    >
+                      Clear data
+                    </Button>
+                  </div>
+                )}
               </div>
             </BottomSheet>
 
@@ -445,23 +390,26 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
             </BottomSheet>
           </div>
         ) : (
-          <div ref={pageColsRef} className="p-4">
+          <div className="p-4">
             <div className="h-[calc(100vh-2rem)] rounded-2xl border overflow-hidden bg-background">
               <div
                 className="h-full w-full grid"
                 style={{
                   gridTemplateColumns: showSummaryPanel
-                    ? `${pageColSizes.left}px 8px ${midFill} 8px ${pageColSizes.right}px`
-                    : `${pageColSizes.left}px 8px minmax(0, 1fr)`,
+                    ? '340px 1px minmax(0, 1fr) 1px 420px'
+                    : '340px 1px minmax(0, 1fr)',
                 }}
               >
                 <div className="h-full flex flex-col min-h-0">
                   <div className="px-3 pt-4 pb-3">
                     <div className="flex items-center justify-between mb-4 gap-2">
-                      <NavTabs
-                        activeTab={activeTab}
-                        labels={{ portfolio: 'Portfolio', transactions: 'Transactions', calendar: 'Calendar', chat: 'Chatbot' }}
-                      />
+                      <div className="flex items-start gap-2">
+                        <NavTabs
+                          activeTab={activeTab}
+                          labels={{ portfolio: 'Portfolio', transactions: 'Transactions', calendar: 'Calendar', chat: 'Chatbot' }}
+                        />
+                        <SourceSwitch />
+                      </div>
                       <ThemeToggle />
                     </div>
 
@@ -475,13 +423,12 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                       </div>
                     </div>
 
-                    <div className="mt-3 flex gap-2">
-                      <Button size="sm" variant="secondary" onClick={pickFiles}>
-                        Upload CSV / PDF
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={clearAll} disabled={!series.length && rawNames.length === 0}>
-                        Clear
-                      </Button>
+                    <div className="mt-4 space-y-2">
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" className="flex-1 w-full" onClick={clearAll} disabled={!series.length && rawNames.length === 0}>
+                          Clear
+                        </Button>
+                      </div>
                     </div>
                   </div>
 
@@ -501,67 +448,113 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                         </Alert>
                       )}
 
-                      {!series.length && !isParsing && (
+                      {/* Cloud mode keeps its panel mounted: sync and disconnect stay
+                          reachable once a statement is on screen. */}
+                      {sourceMode === 'cloud' && <CloudPanel />}
+
+                      {sourceMode === 'local' && !series.length && !isParsing && (
                         <div ref={dropRef}>
-                          <Card className="border-dashed" onClick={pickFiles} style={{ cursor: 'pointer' }}>
-                            <CardHeader>
-                              <CardTitle className="text-base">Click to Upload / Drop CSV or PDF here</CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                              <Alert>
-                                <AlertDescription>IBKR Activity Statement (CSV) or Firstrade statement (PDF).</AlertDescription>
-                              </Alert>
-                            </CardContent>
-                          </Card>
+                          <button
+                            type="button"
+                            onClick={pickFiles}
+                            className="flex w-full flex-col items-center gap-2 rounded-2xl border border-dashed px-4 py-10 text-center transition hover:bg-muted/40"
+                          >
+                            <FileUp className="size-6 text-muted-foreground" />
+                            <span className="text-sm font-medium">Click to upload, or drop a file here</span>
+                            <span className="text-xs text-muted-foreground">
+                              IBKR Activity Statement (CSV) or Firstrade statement (PDF).
+                            </span>
+                          </button>
                         </div>
                       )}
 
                       {(series.length > 0 || rawNames.length > 0) && (
                         <>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {rawNames.length > 0 && <Badge variant="secondary">Files: {rawNames.length}</Badge>}
-                            <Badge>{fmtMode(mode)}</Badge>
-                            {mode !== 'UNKNOWN' && <Badge variant="outline">View: {currencyLabel}</Badge>}
-                            {series.length > 0 && <Badge variant="outline">Days: {series.length}</Badge>}
-                            {transactions.length > 0 && <Badge variant="outline">Txns: {transactions.length}</Badge>}
-                          </div>
-
-                          <Separator />
-
-                          <div className="grid grid-cols-1 gap-3">
-                            <StatCard title="Calendar Total P&L" value={fmtMoney(totalCalendarPnl)} />
-                            <StatCard title="Transactions" value={transactions.length.toLocaleString()} />
-                            <StatCard title="Base Currency" value={baseCurrency} />
-                          </div>
-
-                          <Separator />
-
-                          {mode !== 'UNKNOWN' && viewControls && (
-                            <div className="space-y-3">
-                              <div className="text-sm">View Controls</div>
-                              <div className="text-sm text-muted-foreground">Controls change based on the active tab.</div>
-                              <Separator />
-                              {viewControls}
+                          {/*
+                            The sidebar is the one place visible on every tab, so it carries the
+                            statement's identity and headline figures. Anything a panel already
+                            prints beside its own chart is deliberately left out of here.
+                          */}
+                          <div className="space-y-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge>{fmtMode(mode)}</Badge>
+                              {mode !== 'UNKNOWN' && <Badge variant="outline">{currencyLabel}</Badge>}
                             </div>
-                          )}
+
+                            <dl>
+                              <FieldRow
+                                label="Net Liquidation"
+                                value={currentNavTotal ? fmtMoney(currentNavTotal) : '—'}
+                                unit={currentNavTotal ? baseCurrency : undefined}
+                              />
+                              <FieldRow
+                                label="Realized P&L"
+                                value={fmtSignedMoney(totalCalendarPnl)}
+                                // Follows the calendar's currency view, which under ALL
+                                // is a cross-currency sum rather than a base-currency one.
+                                unit={realizedUnit}
+                                tone={toneOf(totalCalendarPnl)}
+                              />
+                              <FieldRow
+                                label="Activity"
+                                value={`${series.length.toLocaleString()} days · ${transactions.length.toLocaleString()} txns`}
+                              />
+                              <FieldRow
+                                // Names what is loaded, not what the switch is set to:
+                                // flipping to Cloud must not relabel an uploaded file.
+                                label={
+                                  mode === 'IBKR_CLOUD'
+                                    ? rawNames.length > 1
+                                      ? 'Accounts'
+                                      : 'Account'
+                                    : rawNames.length > 1
+                                      ? 'Files'
+                                      : 'File'
+                                }
+                                value={
+                                  rawNames.length > 1
+                                    ? `${rawNames.length} ${mode === 'IBKR_CLOUD' ? 'accounts' : 'statements'}`
+                                    : rawNames[0] ?? '—'
+                                }
+                              />
+                            </dl>
+                          </div>
 
                           {notes.length > 0 && (
-                            <div>
-                              <div className="text-sm">Parser Notes</div>
-                              <div className="text-xs text-muted-foreground space-y-1">
-                                {notes.map((n, i) => (
-                                  <div key={i}>• {n}</div>
-                                ))}
+                            <>
+                              <Separator />
+                              <div className="space-y-1">
+                                <div className="text-sm font-medium">Parser Notes</div>
+                                <div className="space-y-1 text-xs text-muted-foreground">
+                                  {notes.map((n, i) => (
+                                    <div key={i}>• {n}</div>
+                                  ))}
+                                </div>
                               </div>
-                            </div>
+                            </>
                           )}
+                        </>
+                      )}
+
+                      {/* The rail sits below the statement summary and outside its guard:
+                          the chatbot's provider and model are worth setting before any
+                          statement has been loaded. */}
+                      {viewControls && (
+                        <>
+                          {hasData && <Separator />}
+                          <div className="space-y-3">
+                            <div className="text-sm font-medium text-muted-foreground">
+                              {activeTab === 'chat' ? 'Chatbot' : activeTab === 'transactions' ? 'Ledger filters' : 'Calendar view'}
+                            </div>
+                            {viewControls}
+                          </div>
                         </>
                       )}
                     </div>
                   </ScrollArea>
                 </div>
 
-                <Splitter onPointerDown={startPageDrag('lm')} />
+                <div className="bg-border" aria-hidden="true" />
 
                 <div ref={animRef} className="h-full flex flex-col min-h-0">
                   {activeTab === 'transactions' ? (
@@ -577,7 +570,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
 
                 {showSummaryPanel && (
                   <>
-                    <Splitter onPointerDown={startPageDrag('mr')} />
+                    <div className="bg-border" aria-hidden="true" />
                     <div className="h-full flex flex-col min-h-0">
                       <ScrollArea className="flex-1 min-h-0">
                         <div className="p-4 right-inspector">{rightPanel}</div>

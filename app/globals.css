@@ -79,6 +79,10 @@
   --sidebar-ring: oklch(0.708 0 0);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
+  /* Gain/loss is a semantic pair the charts and the figures both draw from, so it
+     lives beside the palette rather than being spelled out at each call site. */
+  --curve-gain: oklch(0.62 0.15 155);
+  --curve-loss: oklch(0.62 0.2 20);
 }
 
 .dark {
@@ -113,6 +117,8 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --curve-gain: oklch(0.72 0.16 158);
+  --curve-loss: oklch(0.68 0.2 18);
 }
 
 @layer base {

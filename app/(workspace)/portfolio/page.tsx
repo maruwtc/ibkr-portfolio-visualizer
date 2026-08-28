@@ -12,6 +12,7 @@ export default function PortfolioPage() {
     currentNavStock,
     currentUnrealized,
     holdingsAllocation,
+    holdingsUnconverted,
     cashAllocationNow,
     navComposition,
     navBreakdown,
@@ -22,6 +23,8 @@ export default function PortfolioPage() {
     portfolioMidDate,
     portfolioStats,
     baseCurrency,
+    realizedUnit,
+    selectedCurrency,
     portfolioAllocation,
     cashVsTrade,
     cashBreakdown,
@@ -37,6 +40,7 @@ export default function PortfolioPage() {
       currentNavStock={currentNavStock}
       currentUnrealized={currentUnrealized}
       holdingsAllocation={holdingsAllocation}
+      holdingsUnconverted={holdingsUnconverted}
       cashAllocationNow={cashAllocationNow}
       navComposition={navComposition}
       navBreakdown={navBreakdown}
@@ -47,6 +51,8 @@ export default function PortfolioPage() {
       portfolioMidDate={portfolioMidDate}
       portfolioStats={portfolioStats}
       baseCurrency={baseCurrency}
+      realizedUnit={realizedUnit}
+      selectedCurrency={selectedCurrency}
       portfolioAllocation={portfolioAllocation}
       cashVsTrade={cashVsTrade}
       cashBreakdown={cashBreakdown}

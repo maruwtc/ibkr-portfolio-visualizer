@@ -1,12 +1,21 @@
 'use client';
 
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 
-import InspectorField from './InspectorField';
+import FieldRow from './FieldRow';
 import type { ActiveTab, MonthStats, Transaction } from './types';
-import { fmtMode, fmtMoney, fmtShareDetail, fmtTxnType, reinvestedValue, typeBadgeVariant } from './utils';
+import {
+  fmtMode,
+  fmtMoney,
+  fmtShareDetail,
+  fmtSignedMoney,
+  fmtTxnType,
+  heatBackground,
+  reinvestedValue,
+  toneOf,
+  typeBadgeVariant,
+} from './utils';
 
 export default function RightPanel({
   activeTab,
@@ -14,10 +23,9 @@ export default function RightPanel({
   rawNames,
   mode,
   selectedTxn,
-  currencyLabel,
+  realizedUnit,
   totalCalendarPnl,
   transactionsLength,
-  baseCurrency,
   activeMonth,
   monthStats,
 }: {
@@ -26,10 +34,9 @@ export default function RightPanel({
   rawNames: string[];
   mode: string;
   selectedTxn: Transaction | null;
-  currencyLabel: string;
+  realizedUnit: string;
   totalCalendarPnl: number;
   transactionsLength: number;
-  baseCurrency: string;
   activeMonth: string;
   monthStats: MonthStats | null;
 }) {
@@ -49,20 +56,20 @@ export default function RightPanel({
 
   if (activeTab === 'transactions') {
     return (
-      // Inside the mobile sheet the card chrome and heading are redundant.
-      <Card className="h-full border-0 py-0 shadow-none lg:border lg:py-6 lg:shadow-sm">
-        <CardHeader className="hidden lg:grid">
-          <CardTitle className="text-base">Transaction Inspector</CardTitle>
-          <CardDescription>Click a row to drill down.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3 px-0 lg:px-6">
+      // The panel column (or the mobile sheet) already frames this, so the inspector
+      // is a plain heading and content rather than a card inside that frame.
+      <div className="h-full w-full">
+        <div className="hidden lg:block">
+          <div className="text-base font-semibold">Transaction Inspector</div>
+          <div className="text-sm text-muted-foreground">Click a row to drill down.</div>
+        </div>
+        <div className="space-y-3 lg:mt-4">
           {!selectedTxn ? (
             <div className="text-sm text-muted-foreground">No transaction selected.</div>
           ) : (
             <>
               <div className="flex items-center gap-2 flex-wrap">
                 <Badge variant={typeBadgeVariant(selectedTxn.type)}>{fmtTxnType(selectedTxn.type)}</Badge>
-                <Badge variant="outline">{selectedTxn.currency}</Badge>
                 <Badge variant="outline">{selectedTxn.date}</Badge>
                 {selectedTxn.symbol && <Badge variant="secondary">{selectedTxn.symbol}</Badge>}
                 {selectedTxn.drip && <Badge variant="outline">DRIP</Badge>}
@@ -76,50 +83,79 @@ export default function RightPanel({
 
               <Separator />
 
-              <div className="grid grid-cols-1 gap-3">
-                <InspectorField label="Amount" value={`${selectedTxn.amount >= 0 ? '+' : ''}${fmtMoney(selectedTxn.amount)}`} />
-                <InspectorField label="Side" value={selectedTxn.side ?? '—'} />
-                <InspectorField label="Quantity" value={selectedTxn.quantity !== undefined ? selectedTxn.quantity.toLocaleString() : '—'} />
-                <InspectorField
-                  label="Trade Price"
-                  value={selectedTxn.tradePrice !== undefined ? selectedTxn.tradePrice.toLocaleString(undefined, { maximumFractionDigits: 4 }) : '—'}
+              <dl>
+                <FieldRow
+                  label="Amount"
+                  value={fmtSignedMoney(selectedTxn.amount)}
+                  unit={selectedTxn.currency}
+                  tone={toneOf(selectedTxn.amount)}
                 />
-                <InspectorField label="Fees" value={selectedTxn.fee !== undefined ? fmtMoney(selectedTxn.fee) : '—'} />
-                <InspectorField label="Realized P/L" value={selectedTxn.realizedPnl !== undefined ? fmtMoney(selectedTxn.realizedPnl) : '—'} />
+                <FieldRow label="Side" value={selectedTxn.side ?? '—'} />
+                <FieldRow label="Quantity" value={selectedTxn.quantity !== undefined ? selectedTxn.quantity.toLocaleString() : '—'} />
+                <FieldRow
+                  label="Trade Price"
+                  value={
+                    selectedTxn.tradePrice !== undefined
+                      ? selectedTxn.tradePrice.toLocaleString(undefined, { maximumFractionDigits: 4 })
+                      : '—'
+                  }
+                  unit={selectedTxn.tradePrice !== undefined ? selectedTxn.currency : undefined}
+                />
+                <FieldRow
+                  label="Fees"
+                  value={selectedTxn.fee !== undefined ? fmtMoney(selectedTxn.fee) : '—'}
+                  unit={selectedTxn.fee !== undefined ? selectedTxn.currency : undefined}
+                />
+                <FieldRow
+                  label="Realized P/L"
+                  value={selectedTxn.realizedPnl !== undefined ? fmtSignedMoney(selectedTxn.realizedPnl) : '—'}
+                  unit={selectedTxn.realizedPnl !== undefined ? selectedTxn.currency : undefined}
+                  tone={toneOf(selectedTxn.realizedPnl)}
+                />
                 {selectedTxn.drip && (
-                  <InspectorField
+                  <FieldRow
                     label="Dividend Reinvested"
                     value={[
-                      reinvestedValue(selectedTxn) !== null ? fmtMoney(reinvestedValue(selectedTxn) as number) : null,
+                      reinvestedValue(selectedTxn) !== null
+                        ? `${fmtMoney(reinvestedValue(selectedTxn) as number)} ${selectedTxn.currency}`
+                        : null,
                       fmtShareDetail(selectedTxn),
                     ]
                       .filter(Boolean)
                       .join(' · ') || '—'}
                   />
                 )}
-              </div>
+              </dl>
 
               <Separator />
 
               <div className="space-y-2">
                 <div className="text-sm font-medium">Raw fields</div>
-                <div className="rounded-xl border p-3">
-                  <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(selectedTxn.raw ?? {}, null, 2)}</pre>
-                </div>
+                {/* A tint separates the dump from the fields above without a third outline. */}
+                <pre className="rounded-lg bg-muted/50 p-3 text-xs whitespace-pre-wrap">
+                  {JSON.stringify(selectedTxn.raw ?? {}, null, 2)}
+                </pre>
               </div>
             </>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     );
   }
 
+  // The month's headline figures already sit above the grid in the calendar itself, so
+  // this column carries what the grid cannot say for itself: how to read its colours,
+  // and where the month sits against the whole statement.
+  const monthShare =
+    monthStats && totalCalendarPnl ? (monthStats.sumPnl / totalCalendarPnl) * 100 : null;
+
   return (
     <div className="h-full w-full">
-      <div className="text-base">Summary</div>
-      <div className="text-sm text-muted-foreground">Context for the selected tab.</div>
+      <div className="text-base font-semibold">Summary</div>
+      <div className="text-sm text-muted-foreground">How to read {activeMonth || 'the calendar'}.</div>
+
       <div className="mt-4 space-y-4">
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex flex-wrap items-center gap-2">
           {rawNames.length > 0 && (
             <Badge variant="secondary">
               {rawNames[0]}
@@ -129,17 +165,47 @@ export default function RightPanel({
           <Badge>{fmtMode(mode)}</Badge>
         </div>
 
-        {monthStats && (
-          <>
-            <Separator />
-            <div className="grid grid-cols-1 gap-3">
-              <InspectorField label="Month P&L" value={fmtMoney(monthStats.sumPnl)} />
-              <InspectorField label="Win Days" value={`${monthStats.winDays}/${monthStats.days}`} />
-              <InspectorField label="Best Day" value={`${monthStats.best.date}  ${fmtMoney(monthStats.best.pnl)}`} />
-              <InspectorField label="Worst Day" value={`${monthStats.worst.date}  ${fmtMoney(monthStats.worst.pnl)}`} />
+        <Separator />
+
+        <div className="space-y-2">
+          <div className="text-sm font-medium">Cell colour</div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">Loss</span>
+            {/* Drawn from the same ramp the grid uses, so the key cannot drift from it. */}
+            <div className="flex h-2 flex-1 overflow-hidden rounded-full">
+              {[-1, -0.6, -0.25, 0, 0.25, 0.6, 1].map((step) => (
+                <div
+                  key={`heat-${step}`}
+                  className="h-full flex-1"
+                  style={{ background: heatBackground(step, Math.abs(step)) }}
+                />
+              ))}
             </div>
-          </>
-        )}
+            <span className="text-xs text-muted-foreground">Gain</span>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Intensity is the day&apos;s P&amp;L against the largest single day in the statement. The second
+            line on each cell is that day against net liquidation value.
+          </div>
+        </div>
+
+        <Separator />
+
+        <dl>
+          <FieldRow
+            label={`${activeMonth || 'Month'} P&L`}
+            value={monthStats ? fmtSignedMoney(monthStats.sumPnl) : '—'}
+            unit={monthStats ? realizedUnit : undefined}
+            tone={monthStats ? toneOf(monthStats.sumPnl) : 'neutral'}
+          />
+          <FieldRow
+            label="Share of period"
+            value={monthShare !== null ? `${monthShare.toFixed(1)}% of ${fmtMoney(totalCalendarPnl)}` : '—'}
+            unit={monthShare !== null ? realizedUnit : undefined}
+          />
+          <FieldRow label="Statement total" value={fmtSignedMoney(totalCalendarPnl)} unit={realizedUnit} />
+          <FieldRow label="Ledger" value={`${transactionsLength.toLocaleString()} transactions`} />
+        </dl>
       </div>
     </div>
   );

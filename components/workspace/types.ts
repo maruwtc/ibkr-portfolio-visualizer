@@ -49,15 +49,26 @@ export type Transaction = {
 export type Position = {
   assetClass: string;
   symbol: string;
+  /** The instrument's own currency, which need not be the statement's base. */
+  currency?: string;
   quantity: number;
   price: number;
+  /** Market value as the statement reports it — denominated in `currency`. */
   marketValue: number;
+  /** `marketValue` converted to the base currency. Absent when no rate was found. */
+  valueBase?: number;
+  /** Unrealized P/L in `currency`. */
   pnlTotal: number;
+  /** `pnlTotal` converted to the base currency. */
+  pnlBase?: number;
 };
 
 export type CashBalance = {
   currency: string;
+  /** The balance in the base currency. */
   valueBase: number;
+  /** The balance in its own currency, when the statement reports it. */
+  value?: number;
 };
 
 export type CalendarCell = {
@@ -89,3 +100,37 @@ export type ParsedStatement = {
 
 export type Sizes = { left: number; mid: number; right: number };
 export type ActiveTab = 'calendar' | 'transactions' | 'portfolio' | 'chat' | 'raw';
+
+/** Where statement data comes from: parsed on this device, or synced from a broker API. */
+export type SourceMode = 'local' | 'cloud';
+
+export type CloudStatus = {
+  provider: string;
+  available: boolean;
+  reason: string | null;
+  authenticated: boolean;
+  configured: boolean;
+  authEnabled: boolean;
+  databaseEnabled: boolean;
+  maskedClientId: string | null;
+  credentialUpdatedAt: string | null;
+  user: { name: string | null; email: string | null } | null;
+};
+
+/** Marker that this browser has enabled the server's Personal SnapTrade integration. */
+export type CloudSession = { mode: 'personal' };
+
+export type CloudAccount = {
+  id: string;
+  name: string;
+  institution: string;
+  currency: string | null;
+  total: number | null;
+};
+
+export type CloudConnection = {
+  id: string;
+  brokerage: string;
+  disabled: boolean;
+  updatedAt: string | null;
+};

@@ -3,12 +3,37 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import Papa from 'papaparse';
 
-import type { CashBalance, CurrencyDaily, DailyPoint, MonthStats, ParsedStatement, Position, Transaction, TxnType } from './types';
+import type {
+  CashBalance,
+  CloudAccount,
+  CloudConnection,
+  CloudSession,
+  CloudStatus,
+  CurrencyDaily,
+  DailyPoint,
+  MonthStats,
+  ParsedStatement,
+  Position,
+  SourceMode,
+  Transaction,
+  TxnType,
+} from './types';
 import { buildMonthGrid, monthKey, safeNum, toISODate } from './utils';
 import { extractPdfLines } from './pdf';
 import { looksLikeFirstradeStatement, parseFirstradeStatement } from './firstrade';
 
-type WorkspaceMode = 'IBKR_STATEMENT' | 'FIRSTRADE_STATEMENT' | 'MIXED' | 'UNKNOWN';
+type WorkspaceMode = 'IBKR_STATEMENT' | 'FIRSTRADE_STATEMENT' | 'IBKR_CLOUD' | 'MIXED' | 'UNKNOWN';
+
+/** One statement handed to the ingestion path, plus the label it should be filed under. */
+type IngestEntry = { label: string; statement: ParsedStatement | null; notes?: string[] };
+
+/** One labelled slice of a breakdown, optionally carrying its pre-conversion amount. */
+export type AllocationSlice = {
+  label: string;
+  value: number;
+  color: string;
+  native?: { value: number; currency: string };
+};
 
 type WorkspaceContextValue = {
   rawNames: string[];
@@ -16,6 +41,15 @@ type WorkspaceContextValue = {
   parseError: string;
   notes: string[];
   rawPreview: any;
+
+  sourceMode: SourceMode;
+  cloudStatus: CloudStatus | null;
+  cloudSession: CloudSession | null;
+  cloudAccounts: CloudAccount[];
+  cloudConnections: CloudConnection[];
+  cloudBusy: '' | 'sync';
+  cloudError: string;
+  cloudSyncedAt: number | null;
 
   series: DailyPoint[];
   mode: WorkspaceMode;
@@ -48,6 +82,9 @@ type WorkspaceContextValue = {
   parseFiles: (files: File[]) => Promise<void>;
   pickFiles: () => void;
   clearAll: () => void;
+  setSourceMode: (v: SourceMode) => void;
+  checkCloudStatus: () => Promise<void>;
+  syncCloud: () => Promise<void>;
   sendChat: () => Promise<void>;
   refreshChatModels: () => Promise<void>;
   clearChat: () => void;
@@ -69,9 +106,11 @@ type WorkspaceContextValue = {
   monthStats: MonthStats | null;
   currencies: string[];
   currencyLabel: string;
+  /** Currency code the realized figures are actually in, or `mixed`. */
+  realizedUnit: string;
   txnCurrenciesAvailable: string[];
   filteredTxns: Transaction[];
-  txnSummary: { total: number; byType: Record<TxnType, number> };
+  txnSummary: { total: number; byType: Record<TxnType, number>; currency: string | null; currencies: string[] };
   totalCalendarPnl: number;
   portfolioCurve: { date: string; cumulative: number; pnl: number }[];
   portfolioStats: { best: DailyPoint; worst: DailyPoint; avgDaily: number } | null;
@@ -87,8 +126,10 @@ type WorkspaceContextValue = {
   currentNavCash: number;
   currentNavStock: number;
   currentUnrealized: number;
-  holdingsAllocation: { label: string; value: number; color: string }[];
-  cashAllocationNow: { label: string; value: number; color: string }[];
+  holdingsAllocation: AllocationSlice[];
+  cashAllocationNow: AllocationSlice[];
+  /** Some holding lacked an FX rate, so base-currency totals are approximate. */
+  holdingsUnconverted: boolean;
   navComposition: { label: string; value: number; color: string }[];
   navBreakdown: { label: string; value: number; color: string }[];
   chatContext: string;
@@ -99,6 +140,12 @@ type WorkspaceContextValue = {
 // Kept under the original name after the rename: changing it would drop the
 // state already cached in existing users' browsers.
 const STORAGE_KEY = 'ibkr_portfolio_state_v1';
+
+// Both outlive "Clear", which only drops the loaded statement: one is a preference,
+// the other records that this browser has enabled the server's Personal integration.
+const SOURCE_MODE_KEY = 'pv_source_mode_v1';
+const CLOUD_SESSION_KEY = 'pv_cloud_session_v1';
+const CLOUD_CACHE_KEY = 'pv_cloud_cache_v1';
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
@@ -146,7 +193,16 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
   const txns: Transaction[] = [];
   const navByClass = new Map<string, number>();
   const positions: Position[] = [];
+  /**
+   * IBKR emits an `Open Positions` section that carries each holding's own Currency,
+   * which the Mark-to-Market summary does not. It is collected separately and, when
+   * present, preferred — without a currency there is no way to state a holding in the
+   * base currency the rest of the statement is reported in.
+   */
+  const openPositions: Position[] = [];
   const cashBalances: CashBalance[] = [];
+  /** Units of base currency per unit of the keyed currency, read off Forex Balances. */
+  const fxToBase = new Map<string, number>();
   const mkId = (prefix: string, i: number) => `${prefix}-${i}-${Math.random().toString(16).slice(2)}`;
   const normalize = (s: string) => (s || '').trim();
   // IBKR's Dividends / Withholding Tax sections carry no Symbol column: the ticker leads
@@ -446,6 +502,40 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
       continue;
     }
 
+    if (section === 'Open Positions') {
+      // Summary rows are the per-symbol totals; Lot rows repeat the same holding.
+      const idxDiscriminator = getI(/^DataDiscriminator$/i);
+      const discriminator = normalize(getByIdx(idxDiscriminator));
+      if (discriminator && !/^summary$/i.test(discriminator)) continue;
+
+      const idxAsset = getI(/^Asset Category$/i);
+      const idxCurrency = getI(/^Currency$/i);
+      const idxSymbol = getI(/^Symbol$/i);
+      const idxQty = getI(/^Quantity$/i);
+      const idxPrice = getI(/^Close Price$/i);
+      const idxValue = getI(/^Value$/i);
+      const idxPnl = getI(/^Unrealized P\/L$/i);
+
+      const assetClass = normalize(getByIdx(idxAsset));
+      const symbol = normalize(getByIdx(idxSymbol));
+      if (!symbol || /^total$/i.test(assetClass) || /^total$/i.test(symbol)) continue;
+
+      const quantity = safeNum(getByIdx(idxQty));
+      const price = safeNum(getByIdx(idxPrice));
+      const marketValue = safeNum(getByIdx(idxValue));
+
+      openPositions.push({
+        assetClass,
+        symbol,
+        currency: normalize(getByIdx(idxCurrency)) || undefined,
+        quantity,
+        price,
+        marketValue: marketValue || quantity * price,
+        pnlTotal: safeNum(getByIdx(idxPnl)),
+      });
+      continue;
+    }
+
     if (section === 'Positions') {
       const idxAsset = getI(/^Asset Class$/i);
       const idxSymbol = getI(/^Symbol$/i);
@@ -475,17 +565,39 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
     }
 
     if (section === 'Forex Balances') {
+      // The Currency column here is the statement's base; Description names the
+      // currency actually held, and `Value in <base>` is already converted.
       const idxDesc = getI(/^Description$/i);
       const idxCurrency = getI(/^Currency$/i);
       const idxValue = getI(/^Value in/i);
+      const idxQty = getI(/^Quantity$/i);
       const label = normalize(getByIdx(idxDesc >= 0 ? idxDesc : idxCurrency));
       if (!label || /^Total$/i.test(label)) continue;
       const valueBase = safeNum(getByIdx(idxValue));
       if (!Number.isFinite(valueBase)) continue;
-      cashBalances.push({ currency: label, valueBase });
+      const value = safeNum(getByIdx(idxQty));
+      cashBalances.push({ currency: label, valueBase, value: value || undefined });
+      // Every balance states the same amount twice, once per currency: their ratio is
+      // the rate, and it is the only place the statement spells one out.
+      if (value) fxToBase.set(label.toUpperCase(), valueBase / value);
       continue;
     }
   }
+
+  // Conversion happens after the sweep: Forex Balances can appear anywhere in the file,
+  // so the rate for a holding's currency may not be known while that holding is read.
+  if (baseCurrency) fxToBase.set(baseCurrency.toUpperCase(), 1);
+  const toBase = (amount: number, currency?: string) => {
+    if (!currency) return undefined;
+    const rate = fxToBase.get(currency.toUpperCase());
+    return rate === undefined ? undefined : amount * rate;
+  };
+
+  const resolvedPositions = (openPositions.length ? openPositions : positions).map((p) => ({
+    ...p,
+    valueBase: toBase(p.marketValue, p.currency),
+    pnlBase: toBase(p.pnlTotal, p.currency),
+  }));
 
   return {
     baseCurrency,
@@ -494,7 +606,7 @@ function parseIBKRStatement(rows: string[][]): ParsedStatement {
     ),
     transactions: txns,
     navByClass: Object.fromEntries(navByClass.entries()),
-    positions,
+    positions: resolvedPositions,
     cashBalances,
     statementTimestamp,
     notes,
@@ -545,6 +657,16 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [parseError, setParseError] = useState<string>('');
   const [notes, setNotes] = useState<string[]>([]);
   const [rawPreview, setRawPreview] = useState<any>(null);
+
+  // Local is the default: nothing is fetched, and no server is required.
+  const [sourceMode, setSourceModeState] = useState<SourceMode>('local');
+  const [cloudStatus, setCloudStatus] = useState<CloudStatus | null>(null);
+  const [cloudSession, setCloudSession] = useState<CloudSession | null>(null);
+  const [cloudAccounts, setCloudAccounts] = useState<CloudAccount[]>([]);
+  const [cloudConnections, setCloudConnections] = useState<CloudConnection[]>([]);
+  const [cloudBusy, setCloudBusy] = useState<'' | 'sync'>('');
+  const [cloudError, setCloudError] = useState('');
+  const [cloudSyncedAt, setCloudSyncedAt] = useState<number | null>(null);
 
   const [series, setSeries] = useState<DailyPoint[]>([]);
   const [mode, setMode] = useState<WorkspaceMode>('UNKNOWN');
@@ -597,6 +719,118 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setActiveMonth(s.length ? monthKey(s[s.length - 1].date) : '');
   }, []);
 
+  /** Clears whatever a previous load put on screen, before a new one lands. */
+  const resetIngestState = useCallback(() => {
+    setParseError('');
+    setNotes([]);
+    setMode('UNKNOWN');
+    setSeries([]);
+    setCurrencyDaily([]);
+    setTransactions([]);
+    setNavByClass({});
+    setPositions([]);
+    setCashBalances([]);
+    setRawPreview(null);
+    setSelectedTxn(null);
+  }, []);
+
+  /**
+   * The single point where statements become workspace state.
+   *
+   * Uploads and cloud syncs differ only in how they obtain a `ParsedStatement`;
+   * merging, base-currency reconciliation and note collection are shared here so the
+   * two source modes cannot drift apart.
+   */
+  const applyStatements = useCallback(
+    (entries: IngestEntry[], detectedMode: WorkspaceMode, emptyError: string): boolean => {
+      const allCurrencyDaily: CurrencyDaily[] = [];
+      const allTxns: Transaction[] = [];
+      let bestState: {
+        ts: number;
+        navByClass: Record<string, number>;
+        positions: Position[];
+        cashBalances: CashBalance[];
+      } | null = null;
+      const perFileNotes: { file: string; notes: string[] }[] = [];
+
+      let detectedBaseCurrency: string | null = null;
+      const baseCurrencySet = new Set<string>();
+
+      for (const entry of entries) {
+        const out = entry.statement;
+
+        if (!out) {
+          if (entry.notes?.length) perFileNotes.push({ file: entry.label, notes: entry.notes });
+          continue;
+        }
+
+        if (out.baseCurrency) {
+          baseCurrencySet.add(out.baseCurrency);
+          if (!detectedBaseCurrency) detectedBaseCurrency = out.baseCurrency;
+        }
+
+        allCurrencyDaily.push(...out.currencyDaily);
+
+        // A cloud sync labels rows by account; only files need the label applied here.
+        allTxns.push(...out.transactions.map((t) => ({ ...t, sourceFile: t.sourceFile ?? entry.label })));
+
+        perFileNotes.push({ file: entry.label, notes: [...(entry.notes ?? []), ...out.notes] });
+
+        const ts = out.statementTimestamp ?? 0;
+        if (!bestState || ts > bestState.ts) {
+          bestState = {
+            ts,
+            navByClass: out.navByClass,
+            positions: out.positions,
+            cashBalances: out.cashBalances,
+          };
+        }
+      }
+
+      const hasState =
+        !!bestState &&
+        (Object.keys(bestState.navByClass || {}).length > 0 || bestState.positions.length > 0 || bestState.cashBalances.length > 0);
+      if (!allCurrencyDaily.length && !allTxns.length && !hasState) {
+        setParseError(emptyError);
+        return false;
+      }
+
+      setMode(detectedMode);
+
+      if (detectedBaseCurrency) {
+        setBaseCurrency(detectedBaseCurrency);
+      }
+      if (baseCurrencySet.size > 1) {
+        perFileNotes.unshift({
+          file: 'MERGE',
+          notes: [`Multiple Base Currencies detected: ${[...baseCurrencySet].join(', ')}. Using: ${detectedBaseCurrency ?? baseCurrency}`],
+        });
+      }
+
+      const mergedDaily = mergeCurrencyDaily(allCurrencyDaily);
+      setCurrencyDaily(mergedDaily);
+
+      const mergedTxns = [...allTxns].sort((a, b) => b.date.localeCompare(a.date));
+      setTransactions(mergedTxns);
+
+      if (bestState) {
+        setNavByClass(bestState.navByClass);
+        setPositions(bestState.positions);
+        setCashBalances(bestState.cashBalances);
+      }
+
+      const base = detectedBaseCurrency || baseCurrency;
+      setSelectedCurrency('ALL');
+      rebuildSeriesFromCurrencyDaily(mergedDaily, base, 'ALL');
+
+      setNotes(mergeNotes(perFileNotes));
+      setParseVersion((v) => v + 1);
+
+      return true;
+    },
+    [baseCurrency, rebuildSeriesFromCurrencyDaily]
+  );
+
   const parseFiles = useCallback(
     async (files: File[]) => {
       const list = (files || []).filter(Boolean);
@@ -604,32 +838,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
       setRawNames(list.map((f) => f.name));
       setIsParsing(true);
-      setParseError('');
-      setNotes([]);
-      setMode('UNKNOWN');
-      setSeries([]);
-      setCurrencyDaily([]);
-      setTransactions([]);
-      setNavByClass({});
-      setPositions([]);
-      setCashBalances([]);
-      setRawPreview(null);
-      setSelectedTxn(null);
+      resetIngestState();
 
       try {
-        const allCurrencyDaily: CurrencyDaily[] = [];
-        const allTxns: Transaction[] = [];
-        let bestState: {
-          ts: number;
-          navByClass: Record<string, number>;
-          positions: Position[];
-          cashBalances: CashBalance[];
-        } | null = null;
-        const perFileNotes: { file: string; notes: string[] }[] = [];
-
-        let detectedBaseCurrency: string | null = null;
-        const baseCurrencySet = new Set<string>();
-
+        const entries: IngestEntry[] = [];
         let previewSet = false;
         const detectedModes = new Set<WorkspaceMode>();
 
@@ -641,16 +853,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
             const lines = await extractPdfLines(file);
 
             if (!lines.length) {
-              perFileNotes.push({
-                file: file.name,
+              entries.push({
+                label: file.name,
+                statement: null,
                 notes: ['PDF has no extractable text (scanned image?). Skipped.'],
               });
               continue;
             }
 
             if (!looksLikeFirstradeStatement(lines)) {
-              perFileNotes.push({
-                file: file.name,
+              entries.push({
+                label: file.name,
+                statement: null,
                 notes: ['Not a recognized Firstrade PDF statement. Skipped.'],
               });
               continue;
@@ -666,13 +880,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
             const rows = (raw.data || []).map((r) => (r || []).map((x) => String(x ?? '')));
 
             if (!rows.length) {
-              perFileNotes.push({ file: file.name, notes: ['CSV has no rows.'] });
+              entries.push({ label: file.name, statement: null, notes: ['CSV has no rows.'] });
               continue;
             }
 
             if (!looksLikeIBKRStatement(rows)) {
-              perFileNotes.push({
-                file: file.name,
+              entries.push({
+                label: file.name,
+                statement: null,
                 notes: ['Not IBKR Activity Statement CSV (Statement/Header/Data). Skipped.'],
               });
               continue;
@@ -683,26 +898,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
             detectedModes.add('IBKR_STATEMENT');
           }
 
-          if (out.baseCurrency) {
-            baseCurrencySet.add(out.baseCurrency);
-            if (!detectedBaseCurrency) detectedBaseCurrency = out.baseCurrency;
-          }
-
-          allCurrencyDaily.push(...out.currencyDaily);
-
-          allTxns.push(...out.transactions.map((t) => ({ ...t, sourceFile: file.name })));
-
-          perFileNotes.push({ file: file.name, notes: out.notes });
-
-          const ts = out.statementTimestamp ?? 0;
-          if (!bestState || ts > bestState.ts) {
-            bestState = {
-              ts,
-              navByClass: out.navByClass,
-              positions: out.positions,
-              cashBalances: out.cashBalances,
-            };
-          }
+          entries.push({ label: file.name, statement: out });
 
           if (!previewSet && preview) {
             setRawPreview(preview.slice(0, 120));
@@ -710,53 +906,19 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
-        const hasState =
-          !!bestState &&
-          (Object.keys(bestState.navByClass || {}).length > 0 || bestState.positions.length > 0 || bestState.cashBalances.length > 0);
-        if (!allCurrencyDaily.length && !allTxns.length && !hasState) {
-          setParseError('No valid IBKR (CSV) or Firstrade (PDF) statement data found in the selected files.');
-          setIsParsing(false);
-          return;
-        }
-
-        setMode(detectedModes.size > 1 ? 'MIXED' : ([...detectedModes][0] ?? 'UNKNOWN'));
-
-        if (detectedBaseCurrency) {
-          setBaseCurrency(detectedBaseCurrency);
-        }
-        if (baseCurrencySet.size > 1) {
-          perFileNotes.unshift({
-            file: 'MERGE',
-            notes: [`Multiple Base Currencies detected: ${[...baseCurrencySet].join(', ')}. Using: ${detectedBaseCurrency ?? baseCurrency}`],
-          });
-        }
-
-        const mergedDaily = mergeCurrencyDaily(allCurrencyDaily);
-        setCurrencyDaily(mergedDaily);
-
-        const mergedTxns = [...allTxns].sort((a, b) => b.date.localeCompare(a.date));
-        setTransactions(mergedTxns);
-
-        if (bestState) {
-          setNavByClass(bestState.navByClass);
-          setPositions(bestState.positions);
-          setCashBalances(bestState.cashBalances);
-        }
-
-        const base = detectedBaseCurrency || baseCurrency;
-        setSelectedCurrency('ALL');
-        rebuildSeriesFromCurrencyDaily(mergedDaily, base, 'ALL');
-
-        setNotes(mergeNotes(perFileNotes));
+        applyStatements(
+          entries,
+          detectedModes.size > 1 ? 'MIXED' : ([...detectedModes][0] ?? 'UNKNOWN'),
+          'No valid IBKR (CSV) or Firstrade (PDF) statement data found in the selected files.'
+        );
 
         setIsParsing(false);
-        setParseVersion((v) => v + 1);
       } catch (e: any) {
         setIsParsing(false);
         setParseError(`Failed to read/parse files: ${e?.message || String(e)}`);
       }
     },
-    [baseCurrency, rebuildSeriesFromCurrencyDaily]
+    [applyStatements, resetIngestState]
   );
 
   const pickFiles = useCallback(() => {
@@ -800,6 +962,164 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       }
     }
   }, []);
+
+  const persistCloudSession = useCallback((session: CloudSession | null) => {
+    setCloudSession(session);
+    if (typeof window === 'undefined') return;
+    try {
+      if (session) window.localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify(session));
+      else window.localStorage.removeItem(CLOUD_SESSION_KEY);
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  const checkCloudStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/cloud/status', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const data = await res.json();
+      setCloudStatus({
+        provider: typeof data?.provider === 'string' ? data.provider : 'snaptrade',
+        available: !!data?.available,
+        reason: typeof data?.reason === 'string' ? data.reason : null,
+        authenticated: !!data?.authenticated,
+        configured: !!data?.configured,
+        authEnabled: !!data?.authEnabled,
+        databaseEnabled: !!data?.databaseEnabled,
+        maskedClientId: typeof data?.maskedClientId === 'string' ? data.maskedClientId : null,
+        credentialUpdatedAt: typeof data?.credentialUpdatedAt === 'string' ? data.credentialUpdatedAt : null,
+        user:
+          data?.user && typeof data.user === 'object'
+            ? {
+                name: typeof data.user.name === 'string' ? data.user.name : null,
+                email: typeof data.user.email === 'string' ? data.user.email : null,
+              }
+            : null,
+      });
+    } catch {
+      // A statically exported build serves no API routes at all, and that failure is
+      // itself the answer: this deployment cannot reach a broker.
+      setCloudStatus({
+        provider: 'snaptrade',
+        available: false,
+        reason: 'This build serves no API routes, so cloud sync is unavailable here. Run the app on a Node server to enable it.',
+        authenticated: false,
+        configured: false,
+        authEnabled: false,
+        databaseEnabled: false,
+        maskedClientId: null,
+        credentialUpdatedAt: null,
+        user: null,
+      });
+    }
+  }, []);
+
+  const setSourceMode = useCallback(
+    (v: SourceMode) => {
+      setSourceModeState(v);
+      setCloudError('');
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(SOURCE_MODE_KEY, v);
+        } catch {
+          // ignore storage errors
+        }
+      }
+      // Nothing is requested until the user actually asks for the cloud path.
+      if (v === 'cloud') checkCloudStatus();
+    },
+    [checkCloudStatus]
+  );
+
+  const syncCloud = useCallback(async () => {
+    setCloudBusy('sync');
+    setCloudError('');
+    setIsParsing(true);
+
+    try {
+      const res = await fetch('/api/cloud/snaptrade/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || `Sync failed (${res.status})`);
+
+      const accounts: CloudAccount[] = Array.isArray(data?.accounts) ? data.accounts : [];
+      setCloudAccounts(accounts);
+      setCloudConnections(Array.isArray(data?.connections) ? data.connections : []);
+      persistCloudSession({ mode: 'personal' });
+
+      if (!data?.statement) throw new Error(data?.error || 'No brokerage account is connected yet.');
+
+      resetIngestState();
+      setRawNames(accounts.map((a) => [a.institution, a.name].filter(Boolean).join(' · ') || a.id));
+      applyStatements(
+        [{ label: 'SnapTrade', statement: data.statement as ParsedStatement }],
+        'IBKR_CLOUD',
+        'The connected account returned no positions or activity.'
+      );
+      setCloudSyncedAt(typeof data?.syncedAt === 'number' ? data.syncedAt : Date.now());
+    } catch (e: any) {
+      setCloudError(e?.message || 'Cloud sync failed');
+    } finally {
+      setCloudBusy('');
+      setIsParsing(false);
+    }
+  }, [applyStatements, persistCloudSession, resetIngestState]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const storedMode = window.localStorage.getItem(SOURCE_MODE_KEY);
+      if (storedMode === 'cloud' || storedMode === 'local') setSourceModeState(storedMode);
+
+      const storedSession = window.localStorage.getItem(CLOUD_SESSION_KEY);
+      if (storedSession) {
+        const parsed = JSON.parse(storedSession);
+        if (parsed?.mode === 'personal') {
+          setCloudSession({ mode: 'personal' });
+
+          const cached = window.localStorage.getItem(CLOUD_CACHE_KEY);
+          if (cached) {
+            const c = JSON.parse(cached);
+            if (Array.isArray(c?.accounts)) setCloudAccounts(c.accounts);
+            if (Array.isArray(c?.connections)) setCloudConnections(c.connections);
+            if (typeof c?.syncedAt === 'number') setCloudSyncedAt(c.syncedAt);
+          }
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  // Covers the reload that comes back up already in cloud mode.
+  useEffect(() => {
+    if (sourceMode === 'cloud' && !cloudStatus) checkCloudStatus();
+  }, [checkCloudStatus, cloudStatus, sourceMode]);
+
+  /**
+   * Which brokerages are attached is display state, not statement data, so it is
+   * cached beside the session: without it a reload reports "not connected" while the
+   * session behind it is still live.
+   */
+  useEffect(() => {
+    if (!isHydrated || typeof window === 'undefined') return;
+    try {
+      if (!cloudSession) {
+        window.localStorage.removeItem(CLOUD_CACHE_KEY);
+        return;
+      }
+      window.localStorage.setItem(
+        CLOUD_CACHE_KEY,
+        JSON.stringify({ accounts: cloudAccounts, connections: cloudConnections, syncedAt: cloudSyncedAt })
+      );
+    } catch {
+      // ignore storage errors
+    }
+  }, [cloudAccounts, cloudConnections, cloudSession, cloudSyncedAt, isHydrated]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -953,6 +1273,22 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     return selectedCurrency;
   }, [mode, selectedCurrency, baseCurrency]);
 
+  /**
+   * The unit to print beside a realized figure.
+   *
+   * `currencyLabel` names the *view*; this names what the numbers under that view
+   * actually are. Under ALL they are a sum across whichever currencies the statement
+   * booked in — frequently just one, in which case that code is both shorter and more
+   * precise than "ALL (no FX)". Only a genuine mix has no unit to give.
+   */
+  const realizedUnit = useMemo(() => {
+    if (mode === 'UNKNOWN') return '';
+    if (selectedCurrency === 'BASE') return baseCurrency;
+    if (selectedCurrency !== 'ALL') return selectedCurrency;
+    const seen = new Set(currencyDaily.filter((r) => r.pnl !== 0).map((r) => r.currency));
+    return seen.size === 1 ? [...seen][0] : 'mixed';
+  }, [mode, selectedCurrency, baseCurrency, currencyDaily]);
+
   useEffect(() => {
     if (mode === 'UNKNOWN') return;
     rebuildSeriesFromCurrencyDaily(currencyDaily, baseCurrency, selectedCurrency);
@@ -993,7 +1329,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       return acc;
     }, {} as Record<TxnType, number>);
 
-    return { total, byType };
+    // These totals add raw amounts, so they only denote a currency when every filtered
+    // row shares one. Otherwise the sum has no single unit and must say so.
+    const seen = [...new Set(filteredTxns.map((t) => t.currency).filter(Boolean))].sort();
+    const currency = seen.length === 1 ? seen[0] : null;
+
+    return { total, byType, currency, currencies: seen };
   }, [filteredTxns]);
 
   useEffect(() => {
@@ -1093,16 +1434,35 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const currentNavTotal = navByClass.total ?? 0;
   const currentNavCash = navByClass.cash ?? 0;
   const currentNavStock = navByClass.stock ?? 0;
-  const currentUnrealized = useMemo(() => positions.reduce((acc, p) => acc + p.pnlTotal, 0), [positions]);
+  // Holdings are reported in each instrument's own currency, while net asset value is
+  // reported in the base currency. Everything the overview shows is stated in base, so
+  // the converted figure is the one to use — falling back to the native amount only
+  // when the statement gave no rate to convert with.
+  const currentUnrealized = useMemo(
+    () => positions.reduce((acc, p) => acc + (p.pnlBase ?? p.pnlTotal), 0),
+    [positions]
+  );
+
+  /** True when some holding could not be converted, so totals mix currencies. */
+  const holdingsUnconverted = useMemo(
+    () => positions.some((p) => /stocks?/i.test(p.assetClass) && p.marketValue !== 0 && p.valueBase === undefined),
+    [positions]
+  );
+
   const holdingsAllocation = useMemo(() => {
-    const bySymbol = new Map<string, number>();
+    const bySymbol = new Map<string, { base: number; native: number; currency?: string }>();
     for (const p of positions) {
       if (!/stocks?/i.test(p.assetClass)) continue;
-      const value = Math.abs(p.marketValue);
-      if (!value) continue;
-      bySymbol.set(p.symbol, (bySymbol.get(p.symbol) || 0) + value);
+      const base = Math.abs(p.valueBase ?? p.marketValue);
+      if (!base) continue;
+      const prev = bySymbol.get(p.symbol);
+      bySymbol.set(p.symbol, {
+        base: (prev?.base || 0) + base,
+        native: (prev?.native || 0) + Math.abs(p.marketValue),
+        currency: p.currency,
+      });
     }
-    const sorted = [...bySymbol.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+    const sorted = [...bySymbol.entries()].sort((a, b) => b[1].base - a[1].base).slice(0, 8);
     const palette = [
       'var(--chart-1)',
       'var(--chart-2)',
@@ -1113,7 +1473,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       'hsl(32 85% 55%)',
       'hsl(330 65% 58%)',
     ];
-    return sorted.map(([label, value], i) => ({ label, value, color: palette[i % palette.length] }));
+    return sorted.map(([label, v], i) => ({
+      label,
+      value: v.base,
+      color: palette[i % palette.length],
+      // Only worth showing when it is a different number from the one on the row.
+      native: v.currency && v.base !== v.native ? { value: v.native, currency: v.currency } : undefined,
+    }));
   }, [positions]);
   const cashAllocationNow = useMemo(() => {
     const sorted = [...cashBalances]
@@ -1128,7 +1494,15 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       'var(--chart-5)',
       'hsl(330 65% 58%)',
     ];
-    return sorted.map((c, i) => ({ label: c.currency, value: Math.abs(c.valueBase), color: palette[i % palette.length] }));
+    return sorted.map((c, i) => ({
+      label: c.currency,
+      value: Math.abs(c.valueBase),
+      color: palette[i % palette.length],
+      native:
+        c.value !== undefined && Math.abs(c.value) !== Math.abs(c.valueBase)
+          ? { value: Math.abs(c.value), currency: c.currency }
+          : undefined,
+    }));
   }, [cashBalances]);
 
   const NAV_STOCK_COLOR = 'var(--chart-1)';
@@ -1180,16 +1554,21 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   }, [currentNavCash, currentNavStock, currentNavTotal, navOtherClasses]);
 
   const chatContext = useMemo(() => {
+    // Both currencies go over the wire: a bare market value in the instrument's own
+    // currency reads as base-currency money to the model, exactly as it did on screen.
     const topPositions = [...positions]
-      .sort((a, b) => Math.abs(b.marketValue) - Math.abs(a.marketValue))
+      .sort((a, b) => Math.abs(b.valueBase ?? b.marketValue) - Math.abs(a.valueBase ?? a.marketValue))
       .slice(0, 25)
       .map((p) => ({
         assetClass: p.assetClass,
         symbol: p.symbol,
         quantity: p.quantity,
         price: p.price,
+        currency: p.currency ?? baseCurrency,
         marketValue: p.marketValue,
+        marketValueBase: p.valueBase,
         pnlTotal: p.pnlTotal,
+        pnlTotalBase: p.pnlBase,
       }));
     const recentTxns = transactions.slice(0, 50).map((t) => ({
       date: t.date,
@@ -1260,6 +1639,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       parseError,
       notes,
       rawPreview,
+      sourceMode,
+      cloudStatus,
+      cloudSession,
+      cloudAccounts,
+      cloudConnections,
+      cloudBusy,
+      cloudError,
+      cloudSyncedAt,
+      setSourceMode,
+      checkCloudStatus,
+      syncCloud,
       series,
       mode,
       baseCurrency,
@@ -1305,6 +1695,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       monthStats,
       currencies,
       currencyLabel,
+      realizedUnit,
       txnCurrenciesAvailable,
       filteredTxns,
       txnSummary,
@@ -1324,6 +1715,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       currentNavStock,
       currentUnrealized,
       holdingsAllocation,
+      holdingsUnconverted,
       cashAllocationNow,
       navComposition,
       navBreakdown,
@@ -1349,16 +1741,26 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       chatModels,
       chatProvider,
       chatProviders,
+      checkCloudStatus,
       clearAll,
+      cloudAccounts,
+      cloudBusy,
+      cloudConnections,
+      cloudError,
+      cloudSession,
+      cloudStatus,
+      cloudSyncedAt,
       currencies,
       currencyDaily,
       currencyLabel,
+      realizedUnit,
       currentNavCash,
       currentNavStock,
       currentNavTotal,
       currentUnrealized,
       filteredTxns,
       holdingsAllocation,
+      holdingsUnconverted,
       isParsing,
       maxAbsPnl,
       mode,
@@ -1392,6 +1794,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       setChatProvider,
       setSelectedCurrency,
       setSelectedTxn,
+      setSourceMode,
+      sourceMode,
+      syncCloud,
       setTxnCurrency,
       setTxnSearch,
       setTxnSort,

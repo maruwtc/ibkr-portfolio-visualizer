@@ -56,11 +56,50 @@ export function safeNum(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Money always carries both decimals so a column of figures lines up. */
 export function fmtMoney(n: number) {
   const sign = n < 0 ? '-' : '';
   const abs = Math.abs(n);
-  return `${sign}${abs.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  return `${sign}${abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+
+/** Money that reads as a change rather than a level: `+1,398.32`, `-948.01`. */
+export function fmtSignedMoney(n: number) {
+  return `${n > 0 ? '+' : ''}${fmtMoney(n)}`;
+}
+
+/** Short money for axis ticks and other places where width is scarce. */
+export function fmtCompactMoney(n: number) {
+  const sign = n < 0 ? '-' : '';
+  const abs = Math.abs(n);
+  if (abs >= 1000) {
+    return `${sign}${abs.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })}`;
+  }
+  return `${sign}${abs.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+export function fmtPct(fraction: number, digits = 1) {
+  return `${(fraction * 100).toFixed(digits)}%`;
+}
+
+/** Share of a whole, guarding the divide-by-zero an empty statement produces. */
+export function shareOf(value: number, total: number) {
+  if (!total) return null;
+  return Math.abs(value) / Math.abs(total);
+}
+
+export type Tone = 'positive' | 'negative' | 'neutral';
+
+export function toneOf(n: number | null | undefined): Tone {
+  if (n === null || n === undefined || n === 0) return 'neutral';
+  return n > 0 ? 'positive' : 'negative';
+}
+
+export const TONE_TEXT: Record<Tone, string> = {
+  positive: 'text-emerald-600 dark:text-emerald-400',
+  negative: 'text-rose-600 dark:text-rose-400',
+  neutral: 'text-foreground',
+};
 
 export function formatShortDate(iso: string) {
   const dt = new Date(`${iso}T00:00:00`);
@@ -119,6 +158,8 @@ export function fmtMode(mode: string) {
       return 'IBKR Statement Mode';
     case 'FIRSTRADE_STATEMENT':
       return 'Firstrade Statement Mode';
+    case 'IBKR_CLOUD':
+      return 'IBKR Cloud Mode';
     case 'MIXED':
       return 'Mixed Statement Mode';
     default:
@@ -159,6 +200,20 @@ export function buildMonthGrid(year: number, monthIndex0: number, dailyMap: Map<
   }
 
   return cells;
+}
+
+/**
+ * The calendar heat tint for a day's P&L.
+ *
+ * Fading the whole cell with `opacity` washes out its labels too, which leaves white
+ * figures unreadable on a pale tint in light mode. Tinting only the background keeps
+ * the intensity ramp while the text stays at full contrast in either theme.
+ */
+export function heatBackground(pnl: number, intensity: number) {
+  if (pnl === 0) return 'var(--muted)';
+  const base = pnl > 0 ? 'var(--curve-gain)' : 'var(--curve-loss)';
+  const alpha = Math.round((0.18 + intensity * 0.62) * 100);
+  return `color-mix(in oklab, ${base} ${alpha}%, transparent)`;
 }
 
 export function quantizeIntensity(pnl: number, maxAbs: number) {
